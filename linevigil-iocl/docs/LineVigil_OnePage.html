@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LineVigil — One Page Summary</title>
+  <style>
+    @page { size: A4; margin: 20mm }
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:#111; margin:0; }
+    .container { width: 100%; max-width: 780px; margin: 0 auto; }
+    header { text-align:center; margin-bottom:8px }
+    h1 { margin:6px 0; font-size:20px; letter-spacing:0.02em }
+    h2 { font-size:12px; margin:8px 0 4px }
+    p { margin:4px 0; font-size:11px; line-height:1.15 }
+    ul { margin:6px 0 6px 18px; font-size:11px }
+    .row { display:flex; gap:18px }
+    .col { flex:1 }
+    .note { font-size:10px; color:#444; margin-top:8px }
+    footer { margin-top:12px; font-size:9px; color:#444; text-align:right }
+    .kbd { background:#f3f3f3; border-radius:4px; padding:2px 6px; font-family:monospace; font-size:10px }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>LineVigil — Right-of-Way Protection Intelligence (One-page)</h1>
+      <p style="font-size:11px;margin-top:2px">Purpose: manage excavation requests, patrol verification, pipeline telemetry and imagery detections.</p>
+    </header>
+
+    <div class="row">
+      <div class="col">
+        <h2>Architecture</h2>
+        <ul>
+          <li><b>Backend:</b> Node.js + Express, Socket.IO for realtime.</li>
+          <li><b>Database:</b> PostgreSQL with PostGIS (spatial types & queries). Fallback: in-memory mock in `db.js`.</li>
+          <li><b>Frontend:</b> React (Vite), Tailwind CSS, Leaflet (react-leaflet) for maps.</li>
+        </ul>
+
+        <h2>Core Data Models</h2>
+        <ul>
+          <li>`pipeline_routes` — LineString geometry; nearest-pipeline queries.</li>
+          <li>`excavation_requests` — Point geometry, `distance_to_pipeline`, `status` and `risk_level`.</li>
+          <li>`imagery_detections`, `patrol_tracks`, `verification_logs`, `cgd_ga_telemetry`.</li>
+        </ul>
+
+        <h2>Auth & Security</h2>
+        <ul>
+          <li>Passwords hashed with <i>bcryptjs</i>. JWT tokens via <i>jsonwebtoken</i> with `JWT_SECRET`.</li>
+          <li>`middleware/auth.js` verifies Bearer token and attaches `req.user`.</li>
+        </ul>
+      </div>
+
+      <div class="col">
+        <h2>Key Flows (Stepwise)</h2>
+        <ol style="font-size:11px;padding-left:18px">
+          <li>Login → POST `/api/auth/login` → verify password → return JWT → store in `localStorage`.</li>
+          <li>Contractor creates excavation → backend computes nearest pipeline (PostGIS or mock) → store request with Point geometry.</li>
+          <li>Patrol fetches tasks → verifies incident → backend writes `verification_logs` and updates `excavation_requests`.</li>
+        </ol>
+
+        <h2>Tech Rationale</h2>
+        <ul>
+          <li>PostGIS for accurate spatial queries; Leaflet + GeoJSON for map visualization.</li>
+          <li>Socket.IO enables real-time patrol notifications and telemetry updates.</li>
+          <li>Mock fallback supports offline demo/testing without PostgreSQL.</li>
+        </ul>
+
+        <h2>Run Summary (short)</h2>
+        <p>Backend: install, optionally `npm run init-db`, then `npm run dev`. Frontend: `npm run dev` in `frontend`.</p>
+      </div>
+    </div>
+
+    <div class="note">
+      Notes: Demo fallbacks (client auth bypass & mock DB) exist for local testing and must be removed for production. Ensure `JWT_SECRET` and DB credentials are secured.
+    </div>
+
+    <footer>Generated: 2026-05-29 — LineVigil</footer>
+  </div>
+</body>
+</html>

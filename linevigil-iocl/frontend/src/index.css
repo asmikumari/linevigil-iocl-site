@@ -1,0 +1,430 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Space+Grotesk:wght@300;400;700&display=swap');
+
+@font-face {
+  font-family: 'Roma';
+  src: local('Roma'), local('Roma Regular'), local('Roma-Regular'),
+       url('/fonts/Roma.woff2') format('woff2'),
+       url('/fonts/Roma.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+.logo-font {
+  font-family: 'Roma', sans-serif !important;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+  --bg-color: #0A0F0D;
+  --bg-image-rad-1: rgba(243, 112, 33, 0.05);
+  --bg-image-rad-2: rgba(124, 238, 255, 0.05);
+  --bg-grid-color: rgba(17, 25, 23, 0.3);
+  --text-color: #E2E8F0;
+  
+  --panel-bg: rgba(10, 15, 13, 0.7);
+  --panel-border: rgba(124, 238, 255, 0.1);
+  --panel-shadow: rgba(0, 0, 0, 0.5);
+  
+  --card-bg: rgba(17, 25, 23, 0.45);
+  --card-border: rgba(255, 255, 255, 0.05);
+  
+  --map-bg: #0A0F0D;
+  --map-popup-bg: rgba(10, 15, 13, 0.85);
+  --map-popup-text: #F8FAFC;
+  --map-popup-border: rgba(124, 238, 255, 0.25);
+}
+
+body.light {
+  color-scheme: light;
+  --bg-color: #F8FAFC;
+  --bg-image-rad-1: rgba(243, 112, 33, 0.03);
+  --bg-image-rad-2: rgba(124, 238, 255, 0.03);
+  --bg-grid-color: rgba(203, 213, 225, 0.25);
+  --text-color: #0F172A;
+  
+  --panel-bg: rgba(255, 255, 255, 0.85);
+  --panel-border: rgba(203, 213, 225, 0.5);
+  --panel-shadow: rgba(148, 163, 184, 0.1);
+  
+  --card-bg: rgba(241, 245, 249, 0.75);
+  --card-border: rgba(203, 213, 225, 0.3);
+  
+  --map-bg: #F1F5F9;
+  --map-popup-bg: rgba(255, 255, 255, 0.95);
+  --map-popup-text: #0F172A;
+  --map-popup-border: rgba(203, 213, 225, 0.8);
+}
+
+body {
+  margin: 0;
+  display: flex;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--bg-color);
+  background-image: 
+    radial-gradient(circle at 10% 20%, var(--bg-image-rad-1) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, var(--bg-image-rad-2) 0%, transparent 40%),
+    linear-gradient(var(--bg-grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid-color) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+  color: var(--text-color);
+  overflow-x: hidden;
+}
+
+#root {
+  width: 100%;
+}
+
+/* Glassmorphism Styles */
+.glass-panel {
+  background: var(--panel-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 8px 32px 0 var(--panel-shadow);
+}
+
+.glass-card {
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  border-color: rgba(124, 238, 255, 0.2);
+  box-shadow: 0 0 25px rgba(124, 238, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Glow Elements */
+.glow-text-orange {
+  text-shadow: 0 0 10px rgba(243, 112, 33, 0.6);
+}
+
+.glow-text-cyan {
+  text-shadow: 0 0 10px rgba(124, 238, 255, 0.6);
+}
+
+.glow-border-orange {
+  box-shadow: 0 0 15px rgba(243, 112, 33, 0.25);
+  border-color: rgba(243, 112, 33, 0.4);
+}
+
+.glow-border-cyan {
+  box-shadow: 0 0 15px rgba(124, 238, 255, 0.25);
+  border-color: rgba(124, 238, 255, 0.4);
+}
+
+.glow-border-mint {
+  box-shadow: 0 0 15px rgba(134, 255, 211, 0.25);
+  border-color: rgba(134, 255, 211, 0.4);
+}
+
+/* Telemetry Grid & Typography */
+.hud-telemetry {
+  font-family: 'Share Tech Mono', monospace;
+}
+
+/* Scrollbar Style */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(10, 15, 13, 0.5);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(124, 238, 255, 0.2);
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 238, 255, 0.4);
+}
+
+/* Leaflet Map Custom Sci-Fi Dark Theme Overrides */
+.leaflet-container {
+  background: var(--map-bg) !important;
+  width: 100%;
+  height: 100%;
+}
+
+.leaflet-popup-content-wrapper {
+  background: var(--map-popup-bg) !important;
+  color: var(--map-popup-text) !important;
+  border: 1px solid var(--map-popup-border) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6) !important;
+  border-radius: 10px !important;
+}
+
+.leaflet-popup-tip {
+  background: var(--map-popup-bg) !important;
+  border-left: 1px solid var(--map-popup-border) !important;
+  border-bottom: 1px solid var(--map-popup-border) !important;
+}
+
+/* Map Zoom Controls retheme */
+.leaflet-bar {
+  border: 1px solid rgba(124, 238, 255, 0.2) !important;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-bar a {
+  background-color: rgba(17, 25, 23, 0.8) !important;
+  color: #7CEEFF !important;
+  border-bottom: 1px solid rgba(124, 238, 255, 0.1) !important;
+  backdrop-filter: blur(5px);
+  transition: all 0.2s;
+}
+
+.leaflet-bar a:hover {
+  background-color: rgba(124, 238, 255, 0.2) !important;
+  color: #fff !important;
+}
+
+/* Scanning Pulse */
+@keyframes radar-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+
+@keyframes svg-pulse {
+  0% {
+    opacity: 0.15;
+    stroke-width: 1px;
+  }
+  50% {
+    opacity: 0.7;
+    stroke-width: 2.5px;
+  }
+  100% {
+    opacity: 0.15;
+    stroke-width: 1px;
+  }
+}
+
+.sonar-ping-ring {
+  animation: svg-pulse 2s infinite ease-in-out;
+}
+
+.radar-glow-ring {
+  position: relative;
+}
+
+.radar-glow-ring::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  border: 1.5px solid rgba(124, 238, 255, 0.4);
+  border-radius: 50%;
+  animation: radar-pulse 3s infinite linear;
+  pointer-events: none;
+}
+
+/* AI scanline animation */
+@keyframes scanline {
+  0% {
+    top: 0%;
+  }
+  100% {
+    top: 100%;
+  }
+}
+
+.satellite-scanline {
+  position: absolute;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(to bottom, transparent, rgba(124, 238, 255, 0.4), transparent);
+  animation: scanline 4s infinite linear;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+/* Breathing animation for high-risk zones */
+@keyframes warning-breath {
+  0% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.35;
+  }
+  100% {
+    opacity: 0.15;
+  }
+}
+
+.breath-warning {
+  animation: warning-breath 2s infinite ease-in-out;
+}
+
+/* Light Mode Utility Overrides (IOCL Theme: Navy Blue + Orange Accent) */
+body.light {
+  color: #1E293B;
+  --bg-color: #F8FAFC;
+  --panel-bg: rgba(255, 255, 255, 0.9);
+  --panel-border: rgba(0, 92, 169, 0.15);
+  --panel-shadow: rgba(0, 40, 80, 0.05);
+  --card-bg: rgba(241, 245, 249, 0.85);
+  --card-border: rgba(0, 92, 169, 0.1);
+  --text-color: #0F172A;
+  --bg-grid-color: rgba(203, 213, 225, 0.35);
+  --bg-image-rad-1: rgba(243, 112, 33, 0.04);
+  --bg-image-rad-2: rgba(0, 92, 169, 0.04);
+}
+
+body.light .text-white {
+  color: #0F172A !important;
+}
+
+body.light .text-slate-100 {
+  color: #1E293B !important;
+}
+
+body.light .text-slate-300 {
+  color: #334155 !important;
+}
+
+body.light .text-slate-400 {
+  color: #475569 !important;
+}
+
+body.light .text-slate-500 {
+  color: #64748B !important;
+}
+
+body.light .text-slate-600 {
+  color: #475569 !important;
+}
+
+body.light .text-\[\#7CEEFF\] {
+  color: #005CA9 !important; /* Deep IOCL Corporate Blue */
+}
+
+body.light .text-\[\#86FFD3\] {
+  color: #047857 !important; /* Deep Emerald Green */
+}
+
+body.light .bg-black\/20,
+body.light .bg-black\/40,
+body.light .bg-black\/50,
+body.light .bg-black\/60,
+body.light .bg-black\/10,
+body.light .bg-black\/85 {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+body.light .bg-black {
+  background-color: #FFFFFF !important;
+}
+
+body.light .border-slate-900,
+body.light .border-slate-800,
+body.light .border-slate-950 {
+  border-color: #E2E8F0 !important;
+}
+
+body.light .border-\[\#7CEEFF\]\/10,
+body.light .border-\[\#7CEEFF\]\/15,
+body.light .border-\[\#7CEEFF\]\/30 {
+  border-color: rgba(0, 92, 169, 0.2) !important;
+}
+
+body.light .border-\[\#F37021\]\/20,
+body.light .border-\[\#F37021\]\/30 {
+  border-color: rgba(243, 112, 33, 0.4) !important;
+}
+
+body.light input,
+body.light select,
+body.light textarea {
+  background-color: #FFFFFF !important;
+  border-color: #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+body.light input::placeholder {
+  color: #94A3B8 !important;
+}
+
+body.light select option {
+  background-color: #FFFFFF !important;
+  color: #0F172A !important;
+}
+
+body.light .bg-\[\#111917\] {
+  background-color: #F1F5F9 !important;
+  color: #005CA9 !important;
+  border-color: rgba(0, 92, 169, 0.15) !important;
+}
+
+body.light .bg-\[\#111917\]\/35 {
+  background-color: #F1F5F9 !important;
+  border-color: rgba(0, 92, 169, 0.15) !important;
+}
+
+body.light .bg-\[\#111917\]\/50 {
+  background-color: #F8FAFC !important;
+  border-color: rgba(0, 92, 169, 0.1) !important;
+}
+
+body.light .text-emerald-400 {
+  color: #059669 !important;
+}
+
+body.light .bg-emerald-500\/10 {
+  background-color: rgba(16, 185, 129, 0.12) !important;
+}
+
+body.light .border-emerald-500\/20 {
+  border-color: rgba(16, 185, 129, 0.25) !important;
+}
+
+body.light .hover\:bg-white\/5:hover {
+  background-color: rgba(0, 92, 169, 0.05) !important;
+}
+
+body.light .divide-slate-900 > * {
+  border-color: #E2E8F0 !important;
+}
+
+/* Scrollbar Style in Light Mode */
+body.light .custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.5);
+}
+body.light .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(203, 213, 225, 0.6);
+}
+
+/* Neon GIS HUD Path Glows & Animations */
+.neon-glow-line {
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+.warning-glow-zone {
+  filter: drop-shadow(0 0 4px #eab308);
+  animation: warning-breath 3.5s infinite ease-in-out;
+}
+
+.danger-glow-zone {
+  filter: drop-shadow(0 0 4px #ef4444);
+  animation: warning-breath 1.8s infinite ease-in-out;
+}
+
