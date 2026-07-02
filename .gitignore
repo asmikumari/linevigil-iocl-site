@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.vscode/
+.env
+.env*.local
+.env.production
+.env.development
+.DS_Store
+npm-debug.log*
+linevigil 2/
+linevigil_iocl/
+/*.docx
+/linevigil_internship_report.html

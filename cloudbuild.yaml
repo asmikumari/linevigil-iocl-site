@@ -1,0 +1,73 @@
+steps:
+  # ----------------------------------------------------
+  # STEP 1: Build & Deploy Backend API Service
+  # ----------------------------------------------------
+  # Build the backend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'gcr.io/$PROJECT_ID/linevigil-backend:$COMMIT_SHA',
+      '-t', 'gcr.io/$PROJECT_ID/linevigil-backend:latest',
+      './backend'
+    ]
+    id: 'build-backend'
+
+  # Push backend to Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/linevigil-backend:$COMMIT_SHA']
+    id: 'push-backend'
+
+  # Deploy backend container to Google Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args: [
+      'run', 'deploy', 'linevigil-backend',
+      '--image', 'gcr.io/$PROJECT_ID/linevigil-backend:$COMMIT_SHA',
+      '--region', 'us-central1',
+      '--platform', 'managed',
+      '--allow-unauthenticated'
+    ]
+    id: 'deploy-backend'
+
+  # ----------------------------------------------------
+  # STEP 2: Build & Deploy Frontend UI Service
+  # ----------------------------------------------------
+  # Note: The frontend needs to know the backend URL during its build stage.
+  # We fetch the backend URL from the previous step and pass it as a build argument.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(gcloud run services describe linevigil-backend --platform managed --region us-central1 --format 'value(status.url)')
+        echo "Backend URL resolved: $$BACKEND_URL"
+        docker build \
+          --build-arg VITE_API_URL="$$BACKEND_URL/api" \
+          --build-arg VITE_SOCKET_URL="$$BACKEND_URL" \
+          -t gcr.io/$PROJECT_ID/linevigil-frontend:$COMMIT_SHA \
+          -t gcr.io/$PROJECT_ID/linevigil-frontend:latest \
+          ./frontend
+    id: 'build-frontend'
+    dependsOn: ['deploy-backend']
+
+  # Push frontend to Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/linevigil-frontend:$COMMIT_SHA']
+    id: 'push-frontend'
+
+  # Deploy frontend container to Google Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args: [
+      'run', 'deploy', 'linevigil-frontend',
+      '--image', 'gcr.io/$PROJECT_ID/linevigil-frontend:$COMMIT_SHA',
+      '--region', 'us-central1',
+      '--platform', 'managed',
+      '--allow-unauthenticated',
+      '--port', '80'
+    ]
+    id: 'deploy-frontend'
+
+images:
+  - 'gcr.io/$PROJECT_ID/linevigil-backend:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/linevigil-frontend:$COMMIT_SHA'
