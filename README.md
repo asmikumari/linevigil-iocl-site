@@ -6,7 +6,7 @@
 
 Built during my Software Development Engineer internship at **Indian Oil Corporation Limited (IOCL)**, May to July 2026.
 
-[**Live demo**](https://linevigil-iocl-site-t87k.vercel.app) · [Walkthrough of each portal](#the-three-portals) · [Design decisions](ARCHITECTURE.md) · [Run it locally](#run-it-locally)
+[**Live demo**](https://linevigil-iocl-site.vercel.app) · [Walkthrough of each portal](#the-three-portals) · [Design decisions](ARCHITECTURE.md) · [Run it locally](#run-it-locally)
 
 ![LineVigil landing page: a pipeline route drawing with 500 m and 1 km risk bands and a dig site measured 360 m from the pipeline](docs/screenshots/landing.jpg)
 
