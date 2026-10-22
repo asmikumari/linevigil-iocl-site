@@ -1,180 +1,156 @@
-# LineVigil Core API & WebSockets Documentation
+# LineVigil API reference
 
-This document provides a comprehensive specifications log of the backend REST APIs and Socket.IO interfaces for the **LineVigil ROW Protection Intelligence Suite**.
+Base path: `/api`. Requests and responses are JSON. Every route except sign-in, sign-up, health and pipelines needs a token from `POST /api/auth/login`, sent as:
 
----
+```
+Authorization: Bearer <token>
+```
 
-## 1. Authentication Service (`/api/auth`)
+Tokens expire after 24 hours.
 
-### 🔑 User Login
-* **Endpoint:** `POST /api/auth/login`
-* **Description:** Authenticates user credentials and returns a secure JWT token along with user telemetry metadata.
-* **Request Headers:**
-  * `Content-Type: application/json`
-* **Request Body:**
-  ```json
-  {
-    "email": "admin@linevigil.com",
-    "password": "password123"
-  }
-  ```
-* **Success Response (200 OK):**
-  ```json
-  {
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "user": {
-      "id": 1,
-      "name": "Admin User",
-      "email": "admin@linevigil.com",
-      "role": "admin"
-    }
-  }
-  ```
-* **Error Response (401 Unauthorized):**
-  ```json
-  {
-    "error": "Invalid email or password"
-  }
-  ```
+## Errors
 
----
+Every error has the same shape. `details` appears on validation errors and names the field that failed.
 
-## 2. Excavation Permits Service (`/api/excavations`)
+```json
+{ "error": "Check the highlighted fields", "details": { "workDate": "Choose the work date" } }
+```
 
-### 📋 Get All Excavation Permit Requests
-* **Endpoint:** `GET /api/excavations`
-* **Description:** Retrieves all contractor excavation requests, including locations and pipeline safety clearances.
-* **Success Response (200 OK):**
-  ```json
-  [
-    {
-      "id": 1,
-      "contractor_name": "ABC Infra",
-      "company_name": "Buildwell Ltd.",
-      "work_date": "2026-06-12",
-      "purpose": "Road Construction",
-      "status": "pending",
-      "risk_level": "high",
-      "distance_to_pipeline": 120.5,
-      "lat": 28.58,
-      "lng": 77.12,
-      "assigned_to": null,
-      "checked_in": false
-    }
+| Status | Meaning |
+| --- | --- |
+| 400 | The body is missing a field, has an invalid value or is not valid JSON |
+| 401 | No token, or the token is invalid or expired. The client should sign in again |
+| 403 | Signed in, but this role cannot perform the action |
+| 404 | The permit or route does not exist |
+| 409 | An account with that email already exists |
+| 413 | The body is larger than 1 MB |
+| 429 | Too many sign-in attempts. Wait for the `Retry-After` seconds |
+
+## Risk rule
+
+Each location is measured to the nearest pipeline centreline (geodesic distance, in metres). The same rule is used for permits, the live site check, simulated detections and patrol proximity alerts.
+
+| Distance | Risk |
+| --- | --- |
+| Under 500 m | `high` |
+| 500 m to 1 km | `medium` |
+| Over 1 km | `low` |
+
+## Health
+
+`GET /api/health` (no token)
+
+```json
+{ "status": "ok", "database": "mongodb", "riskThresholdsMetres": { "high": 500, "medium": 1000 }, "time": "2026-10-23T09:00:00.000Z" }
+```
+
+`database` is `demo-memory` when the API is running on the built-in demo dataset.
+
+## Auth
+
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `POST /auth/signup` | Anyone | `name` (2+ characters), `email`, `password` (8+ characters) | `201` with the new user. Sign-up always creates a **contractor**; admins and patrol officers are created by an admin |
+| `POST /auth/login` | Anyone | `email`, `password` | `{ token, user: { id, name, email, role } }` |
+
+Both are limited to 10 attempts per minute per IP address.
+
+## Excavation permits
+
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `POST /excavations` | Contractor, admin | `lng`, `lat`, `companyName`, `workDate`, `purpose`, optional `contractorName` | `201` with the permit, including `distance_to_pipeline`, `risk_level` and `status: "pending"` |
+| `POST /excavations/check-collision` | Any signed-in user | `lng`, `lat` | Distance, risk and any permits within 500 m (see below) |
+| `GET /excavations` | Admin, patrol | | All permits |
+| `GET /excavations/my` | Any signed-in user | | Permits filed by the current user |
+
+`check-collision` response:
+
+```json
+{
+  "distanceToPipeline": 342.7,
+  "pipelineName": "Mathura-Delhi Product Pipeline",
+  "riskLevel": "high",
+  "collisionStatus": "danger",
+  "thresholdsMetres": { "high": 500, "medium": 1000 },
+  "overlappingPermits": []
+}
+```
+
+`collisionStatus` is `danger`, `warning` or `safe` for high, medium and low risk.
+
+Permit status moves from `pending` to `assigned` (a patrol officer is dispatched) to `Safe to Dig` (the officer verified the site).
+
+## Pipelines
+
+`GET /api/pipelines` (no token) returns a GeoJSON `FeatureCollection` of pipeline routes as `LineString` features.
+
+## Patrol
+
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `GET /patrol/tasks` | Patrol | | Permits assigned to the current officer |
+| `POST /patrol/check-in` | Patrol (assigned officer) | `requestId` | Records arrival at the site |
+| `POST /patrol/verify` | Patrol (assigned officer), admin | `requestId`, optional `notes`, `photoUrl` | Saves the verification and sets the permit to `Safe to Dig` |
+| `GET /patrol/my-verifications` | Patrol | | The officer's own verifications |
+| `GET /patrol/verifications` | Admin | | Every verification on record |
+| `POST /patrol/assign` | Admin | `requestId`, `patrolId` | Assigns an officer. `patrolId` must belong to a patrol account |
+| `GET /patrol/users` | Admin | | Patrol officers |
+| `GET /patrol/tracks` | Admin, patrol | | Recorded GPS points |
+| `POST /patrol/sync-tracks` | Patrol | `tracks`: up to 500 points | Stores GPS points recorded while offline (see below) |
+| `POST /patrol/report-incident` | Patrol, admin | `lng`, `lat`, optional `name`, `riskLevel` | `201` with the incident, which is also broadcast to admins |
+
+### Offline sync
+
+Each point the patrol app records gets a `client_id` (a UUID made on the device). The server stores at most one point per officer and `client_id`, so if a sync request is retried after a dropped connection, nothing is recorded twice.
+
+Request:
+
+```json
+{
+  "tracks": [
+    { "client_id": "1f0c…", "lng": 77.41, "lat": 28.53, "recorded_at": "2026-10-23T08:12:00Z", "is_offline": true, "battery_level": 64 }
   ]
-  ```
+}
+```
 
-### 🛰️ Proximity Collision & Risk Validator
-* **Endpoint:** `POST /api/excavations/check-collision`
-* **Description:** Performs spatial proximity calculations (`$geoNear` index sweep) to determine boundary conflicts between a proposed excavation coordinate and IOCL pipeline centerlines.
-* **Request Body:**
-  ```json
-  {
-    "lat": 28.58,
-    "lng": 77.12
-  }
-  ```
-* **Success Response (200 OK):**
-  ```json
-  {
-    "collision": true,
-    "distance_meters": 120.5,
-    "risk_level": "high",
-    "nearest_pipeline": "IOCL-PL-01 (Mathura-Jalandhar)",
-    "message": "Proposed coordinates within 500m warning buffer zones"
-  }
-  ```
+Response:
 
----
+```json
+{
+  "message": "Synced 1 new point",
+  "synced": 1,
+  "duplicates": 0,
+  "rejected": [],
+  "tracks": [ { "id": 41, "client_id": "1f0c…", "lng": 77.41, "lat": 28.53, "…": "…" } ],
+  "alerts": []
+}
+```
 
-## 3. Pipeline Asset Service (`/api/pipelines`)
+`rejected` lists the index and reason for any point with invalid coordinates or a bad timestamp; the rest of the batch is still stored. `alerts` lists points that were under 500 m from a pipeline.
 
-### 🗺️ Get Pipeline Route Geometry
-* **Endpoint:** `GET /api/pipelines`
-* **Description:** Fetches GeoJSON linestrings for all cross-country pipeline channels.
-* **Success Response (200 OK):**
-  ```json
-  {
-    "type": "FeatureCollection",
-    "features": [
-      {
-        "type": "Feature",
-        "properties": {
-          "id": 1,
-          "name": "IOCL-PL-01 (Mathura-Jalandhar)",
-          "type": "product"
-        },
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50]]
-        }
-      }
-    ]
-  }
-  ```
+## Imagery
 
----
+| Method and path | Who | Body | Returns |
+| --- | --- | --- | --- |
+| `GET /imagery/detections` | Any signed-in user | | Detections and field reports |
+| `POST /imagery/scan` | Admin | | `201` with one **simulated** detection |
 
-## 4. Field Patrol Service (`/api/patrol`)
+No satellite imagery provider is connected. `scan` places a test detection up to 1.5 km either side of a real pipeline route, measures its true distance and sets its risk with the rule above. Simulated detections carry `"source": "simulated-satellite"` and `"simulated": true`, so they can never be mistaken for real data.
 
-### 📍 Fetch Patrol Telemetry Tracks
-* **Endpoint:** `GET /api/patrol/tracks`
-* **Description:** Obtains the latest GPS position tracking, network strength, and transmitter battery levels of active units.
-* **Success Response (200 OK):**
-  ```json
-  [
-    {
-      "id": 1,
-      "patrol_id": 2,
-      "lat": 27.4924,
-      "lng": 77.6737,
-      "is_offline": false,
-      "battery_level": 95,
-      "signal_strength": "excellent",
-      "recorded_at": "2026-07-01T02:30:00Z"
-    }
-  ]
-  ```
+## CGD telemetry
 
----
+`GET /api/cgd/telemetry` (admin) returns city gas distribution geographic areas for the network view.
 
-## 5. WebSockets Interface (Socket.IO — Port 5001)
+## Socket.IO
 
-### 💬 Client-Relayed Messages
-* **Socket Event Listener:** `send-message`
-* **Description:** Emitted when a user sends a chat message. The server broadcasts it to all other active clients.
-* **Packet Structure:**
-  ```json
-  {
-    "id": 1782828990000,
-    "senderId": 2,
-    "receiverId": 1,
-    "sender": "P1",
-    "text": "INSPECTION AT COORDINATE EXC-1002 COMPLETED.",
-    "time": "02:34 AM",
-    "system": false
-  }
-  ```
+The server runs Socket.IO on the same origin as the API.
 
-### 💬 Server-Broadcast Messages
-* **Socket Event Dispatcher:** `receive-message`
-* **Description:** Broadcasted by the backend server to relay incoming text segments to the recipient's UI tab.
-* **Packet Structure:** Matches `send-message` structure.
+| Event | Direction | Payload |
+| --- | --- | --- |
+| `send-message` | Client to server | A chat message object (up to 4 KB). Relayed to every other client as `receive-message` |
+| `receive-message` | Server to client | The relayed chat message |
+| `new-anomalies` | Server to client | An array of new detections or field reports |
+| `patrol-collision-alerts` | Server to client | An array of proximity alerts from synced patrol points |
 
-### 🚨 Real-time Anomaly Broadcast
-* **Socket Event Dispatcher:** `new-anomalies`
-* **Description:** Pushed to the Admin Dashboard when satellite scans identify heavy machinery encroachment.
-* **Packet Structure:**
-  ```json
-  [
-    {
-      "id": 12,
-      "name": "CAT-320 Heavy Excavator",
-      "confidence": 0.94,
-      "risk_level": "high",
-      "lat": 28.58,
-      "lng": 77.12,
-      "detected_at": "2026-07-01T02:32:00Z"
-    }
-  ]
-  ```
+Chat messages are relayed live and not stored.

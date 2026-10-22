@@ -3,7 +3,7 @@ LineVigil One-Page PDF generation
 1) Install dependencies (Node + npm required):
 
 ```powershell
-cd c:\Users\Asmi\OneDrive\Desktop\linevigil\tools
+cd tools
 npm install puppeteer
 ```
 
