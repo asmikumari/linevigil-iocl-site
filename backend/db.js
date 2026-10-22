@@ -445,6 +445,9 @@ module.exports = {
       const newAnomaly = {
         id: newId,
         ...detectionData,
+        // Mock rows must carry flat lat/lng like the seeded ones; the map reads them directly.
+        lat: detectionData.location ? detectionData.location.coordinates[1] : detectionData.lat,
+        lng: detectionData.location ? detectionData.location.coordinates[0] : detectionData.lng,
         detected_at: new Date()
       };
       mockDb.imagery_detections.push(newAnomaly);

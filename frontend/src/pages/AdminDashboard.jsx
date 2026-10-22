@@ -202,7 +202,7 @@ const AdminDashboard = () => {
   useEffect(() => {
     loadData();
 
-    const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001');
+    const socket = io(import.meta.env.VITE_SOCKET_URL || (import.meta.env.DEV ? 'http://localhost:5001' : window.location.origin));
     socketRef.current = socket;
     
     socket.on('new-anomalies', (newAnoms) => {
