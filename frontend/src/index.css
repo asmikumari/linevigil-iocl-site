@@ -1,5 +1,14 @@
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Space+Grotesk:wght@300;400;700&display=swap');
 
+/* Headline face. The file is kept out of git (personal-use licence); without it, headlines fall back to Geist. */
+@font-face {
+  font-family: 'Oblisk';
+  src: url('/fonts/OBLISK.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 @font-face {
   font-family: 'Roma';
   src: local('Roma'), local('Roma Regular'), local('Roma-Regular'),
@@ -20,7 +29,7 @@
 :root {
   font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
   color-scheme: dark;
-  --bg-color: #0A0F0D;
+  --bg-color: #0b0d26;
   --bg-image-rad-1: rgba(243, 112, 33, 0.05);
   --bg-image-rad-2: rgba(124, 238, 255, 0.05);
   --bg-grid-color: rgba(17, 25, 23, 0.3);
