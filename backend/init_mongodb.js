@@ -1,7 +1,8 @@
 const { MongoClient } = require('mongodb');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const bcrypt = require('bcryptjs');
-require('dotenv').config();
+const sample = require('./lib/sampleData');
+require('dotenv').config({ quiet: true });
 
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/linevigil';
 
@@ -12,22 +13,9 @@ const mockDb = {
     { id: 3, name: 'Contractor User', email: 'contractor@linevigil.com', password: bcrypt.hashSync('password123', 10), role: 'contractor' },
     { id: 4, name: 'Patrol Officer 2', email: 'patrol2@linevigil.com', password: bcrypt.hashSync('password123', 10), role: 'patrol' }
   ],
-  pipelines: [
-    { id: 1, name: 'IOCL-PL-01 (Mathura-Jalandhar)', type: 'product', geom: { type: 'LineString', coordinates: [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50], [76.50, 31.00]] } },
-    { id: 2, name: 'IOCL-PL-02 (Koyali-Sanganer)', type: 'crude', geom: { type: 'LineString', coordinates: [[73.18, 22.30], [73.50, 23.50], [74.50, 25.50], [75.80, 26.90]] } },
-    { id: 3, name: 'IOCL-PL-03 (Paradip-Haldia)', type: 'gas', geom: { type: 'LineString', coordinates: [[86.67, 20.27], [87.50, 21.50], [88.20, 22.50]] } }
-  ],
-  excavation_requests: [
-    { id: 1, contractor_id: 3, contractor_name: 'ABC Infra', company_name: 'Buildwell Ltd.', work_date: '2026-06-12', purpose: 'Road Construction', status: 'pending', risk_level: 'high', distance_to_pipeline: 120.5, location: { type: 'Point', coordinates: [77.12, 28.58] }, assigned_to: null, checked_in: false, check_in_time: null, created_at: new Date() },
-    { id: 2, contractor_id: 3, contractor_name: 'KMC Projects', company_name: 'KMC Infra', work_date: '2026-06-11', purpose: 'Sewer Line', status: 'assigned', risk_level: 'medium', distance_to_pipeline: 650.2, location: { type: 'Point', coordinates: [73.50, 23.10] }, assigned_to: 2, checked_in: false, check_in_time: null, created_at: new Date() },
-    { id: 3, contractor_id: 3, contractor_name: 'KMC Projects', company_name: 'Delhi Roads', work_date: '2026-06-14', purpose: 'Water Pipeline', status: 'assigned', risk_level: 'high', distance_to_pipeline: 250.0, location: { type: 'Point', coordinates: [77.20, 28.60] }, assigned_to: 4, checked_in: false, check_in_time: null, created_at: new Date() }
-  ],
-  imagery_detections: [
-    { id: 1, name: 'CAT-320 Heavy Excavator', confidence: 0.94, risk_level: 'high', location: { type: 'Point', coordinates: [77.15, 28.62] }, detected_at: new Date() },
-    { id: 2, name: 'Soil Displacement Anomaly', confidence: 0.81, risk_level: 'medium', location: { type: 'Point', coordinates: [73.45, 23.25] }, detected_at: new Date() },
-    { id: 3, name: 'Unauthorized Backhoe Loader', confidence: 0.88, risk_level: 'high', location: { type: 'Point', coordinates: [77.40, 28.95] }, detected_at: new Date() },
-    { id: 4, name: 'Deep Trench Anomaly', confidence: 0.75, risk_level: 'low', location: { type: 'Point', coordinates: [87.20, 21.15] }, detected_at: new Date() }
-  ],
+  pipelines: sample.PIPELINES.map(({ coordinates, ...p }) => ({ ...p, geom: { type: 'LineString', coordinates } })),
+  excavation_requests: sample.scoredPermits().map(({ lng, lat, ...rest }) => ({ ...rest, location: { type: 'Point', coordinates: [lng, lat] } })),
+  imagery_detections: sample.scoredDetections().map(({ lng, lat, ...rest }) => ({ ...rest, location: { type: 'Point', coordinates: [lng, lat] } })),
   patrol_tracks: [
     { id: 1, patrol_id: 2, location: { type: 'Point', coordinates: [77.67, 27.49] }, is_offline: false, battery_level: 95, signal_strength: 'excellent', recorded_at: new Date() },
     { id: 2, patrol_id: 2, location: { type: 'Point', coordinates: [77.58, 28.00] }, is_offline: false, battery_level: 92, signal_strength: 'good', recorded_at: new Date() },
@@ -153,6 +141,8 @@ async function seed() {
     // Seed Patrol Tracks
     await db.collection('patrol_tracks').insertMany(mockDb.patrol_tracks);
     await db.collection('patrol_tracks').createIndex({ location: '2dsphere' });
+    // Retry-safe offline sync looks points up by device-generated id.
+    await db.collection('patrol_tracks').createIndex({ patrol_id: 1, client_id: 1 }, { unique: true, partialFilterExpression: { client_id: { $type: 'string' } } });
     console.log('Seeded Patrol Tracks and created 2dsphere index on location.');
 
     // Seed CGD Telemetry

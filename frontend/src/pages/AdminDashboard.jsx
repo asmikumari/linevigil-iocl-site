@@ -49,6 +49,8 @@ const AdminDashboard = () => {
   const [patrolTracks, setPatrolTracks] = useState([]);
   const [isScanning, setIsScanning] = useState(false);
   const [scanMessage, setScanMessage] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [scanError, setScanError] = useState('');
   const [showBufferZones, setShowBufferZones] = useState(true);
   const [verificationLogs, setVerificationLogs] = useState([]);
 
@@ -151,7 +153,9 @@ const AdminDashboard = () => {
   const simulateDroneThreat = () => {
     const mockThreat = {
       id: Date.now(),
-      name: 'CAT-320 Heavy Excavator (Simulated)',
+      name: 'Excavator near right-of-way (simulated)',
+      source: 'simulated-satellite',
+      simulated: true,
       confidence: 0.94,
       risk_level: 'high',
       lat: 28.58,
@@ -202,7 +206,7 @@ const AdminDashboard = () => {
   useEffect(() => {
     loadData();
 
-    const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001');
+    const socket = io(import.meta.env.VITE_SOCKET_URL || (import.meta.env.DEV ? 'http://localhost:5001' : window.location.origin));
     socketRef.current = socket;
     
     socket.on('new-anomalies', (newAnoms) => {
@@ -255,43 +259,10 @@ const AdminDashboard = () => {
       setPatrolTracks(trackRes.data);
       setCgdGAs(cgdRes.data);
       setVerificationLogs(verifRes.data);
+      setLoadError('');
     } catch (err) {
-      console.warn('Backend link down. Operating in standalone client-side GIS fallback mode.', err);
-      
-      setPipelines({
-        type: 'FeatureCollection',
-        features: [
-          { type: 'Feature', properties: { id: 1, name: 'IOCL-PL-01 (Mathura-Jalandhar)', type: 'product' }, geometry: { type: 'LineString', coordinates: [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50], [76.50, 31.00]] } },
-          { type: 'Feature', properties: { id: 2, name: 'IOCL-PL-02 (Koyali-Sanganer)', type: 'crude' }, geometry: { type: 'LineString', coordinates: [[73.18, 22.30], [73.50, 23.50], [74.50, 25.50], [75.80, 26.90]] } },
-          { type: 'Feature', properties: { id: 3, name: 'IOCL-PL-03 (Paradip-Haldia)', type: 'gas' }, geometry: { type: 'LineString', coordinates: [[86.67, 20.27], [87.50, 21.50], [88.20, 22.50]] } }
-        ]
-      });
-
-      setAllRequests([
-        { id: 1, contractor_name: 'ABC Infra', company_name: 'Buildwell Ltd.', work_date: '2026-06-12', purpose: 'Road Construction', status: 'pending', risk_level: 'high', distance_to_pipeline: 120.5, lat: 28.58, lng: 77.12, assigned_to: null, checked_in: false, check_in_time: null },
-        { id: 2, contractor_name: 'KMC Projects', company_name: 'KMC Infra', work_date: '2026-06-11', purpose: 'Sewer Line', status: 'assigned', risk_level: 'medium', distance_to_pipeline: 650.2, lat: 28.50, lng: 77.40, assigned_to: 2, checked_in: true, check_in_time: new Date().toISOString() },
-        { id: 3, contractor_name: 'KMC Projects', company_name: 'Delhi Roads', work_date: '2026-06-14', purpose: 'Water Pipeline', status: 'assigned', risk_level: 'high', distance_to_pipeline: 250.0, lat: 28.60, lng: 77.20, assigned_to: 4, checked_in: false, check_in_time: null }
-      ]);
-
-      setPatrolUsers([
-        { id: 2, name: 'Patrol Officer 1', email: 'patrol@linevigil.com' },
-        { id: 4, name: 'Patrol Officer 2', email: 'patrol2@linevigil.com' }
-      ]);
-
-      setImageryDetections([
-        { id: 1, name: 'CAT-320 Heavy Excavator', confidence: 0.94, risk_level: 'high', lat: 28.62, lng: 77.15, detected_at: new Date().toISOString() },
-        { id: 2, name: 'Soil Displacement Anomaly', confidence: 0.81, risk_level: 'medium', lat: 28.50, lng: 77.40, detected_at: new Date().toISOString() },
-        { id: 3, name: 'Unauthorized Backhoe Loader', confidence: 0.88, risk_level: 'high', lat: 28.95, lng: 77.40, detected_at: new Date().toISOString() }
-      ]);
-
-      setPatrolTracks([
-        { id: 1, patrol_id: 2, lat: 28.50, lng: 77.50, is_offline: false, battery_level: 85, signal_strength: 'excellent', recorded_at: new Date().toISOString() }
-      ]);
-
-      setVerificationLogs([
-        { id: 1, request_id: 2, patrol_id: 2, photo_url: 'https://via.placeholder.com/300', notes: 'Clear area, markers visible.', verified_at: new Date().toISOString() }
-      ]);
-
+      console.warn('Could not load dashboard data', err);
+      setLoadError(err.response?.data?.error || 'The LineVigil API is not reachable, so permits, patrols and detections cannot be shown. Check your connection and reload.');
       setCgdGAs(MOCK_CGD_DATA);
     }
   };
@@ -301,8 +272,8 @@ const AdminDashboard = () => {
       await patrolService.assign({ requestId, patrolId });
       loadData();
     } catch (err) {
-      console.warn('Backend assign failed, updating locally');
-      setAllRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: 'assigned', assigned_to: parseInt(patrolId) } : r));
+      console.warn('Assign failed', err);
+      alert(err.response?.data?.error || 'The patrol officer was not assigned because the LineVigil API is not reachable.');
     }
   };
 
@@ -339,7 +310,8 @@ const AdminDashboard = () => {
 
   const triggerSatelliteScan = async () => {
     setIsScanning(true);
-    setScanMessage('Calibrating radar coordinates...');
+    setScanError('');
+    setScanMessage('Running simulated sweep...');
     try {
       const bounds = {
         minLng: 77.0,
@@ -354,25 +326,10 @@ const AdminDashboard = () => {
         await loadData();
       }, 2500);
     } catch (err) {
-      console.warn('Backend scan failed. Simulating satellite detection locally.', err);
-      setTimeout(() => {
-        setIsScanning(false);
-        setScanMessage('');
-        const lat = 28.50 + Math.random() * 0.7;
-        const lng = 77.20 + Math.random() * 0.5;
-        const names = ['CAT-345 Heavy Earthmover', 'Unauthorized Trench Excavation', 'Soil Displacement Alert'];
-        const name = names[Math.floor(Math.random() * names.length)];
-        const localDetection = {
-          id: Date.now(),
-          name,
-          confidence: parseFloat((0.82 + Math.random() * 0.15).toFixed(2)),
-          risk_level: 'high',
-          lat,
-          lng,
-          detected_at: new Date().toISOString()
-        };
-        setImageryDetections(prev => [localDetection, ...prev]);
-      }, 2500);
+      console.warn('Simulated sweep failed', err);
+      setIsScanning(false);
+      setScanMessage('');
+      setScanError(err.response?.data?.error || 'The sweep could not run because the API is not reachable.');
     }
   };
 
@@ -720,43 +677,52 @@ const AdminDashboard = () => {
     );
   };
 
+  const isVerified = (r) => r.status === 'Safe to Dig' || r.status === 'verified';
+
   const renderAnalytics = () => {
     return (
       <div className="space-y-6 w-full animate-in fade-in duration-300">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="glass-panel p-6 rounded-2xl border border-slate-900 bg-black/40 space-y-2">
-            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">SATELLITE SCANS CONDUCTED</p>
-            <p className="text-3xl font-black text-white tracking-tighter">148 SWEEPS</p>
-            <span className="text-[8px] font-bold text-[#86FFD3] uppercase tracking-wider block">+12.5% INCREMENTAL MONTHLY</span>
+            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Detections on record</p>
+            <p className="text-3xl font-black text-white tracking-tighter">{imageryDetections.length}</p>
+            <span className="text-[8px] font-bold text-[#86FFD3] uppercase tracking-wider block">{imageryDetections.filter(d => d.risk_level === 'high').length} within 500 m of a pipeline</span>
           </div>
 
           <div className="glass-panel p-6 rounded-2xl border border-slate-900 bg-black/40 space-y-2">
-            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Compliance Rate (Buffer zone)</p>
-            <p className="text-3xl font-black text-white tracking-tighter">98.42%</p>
-            <span className="text-[8px] font-bold text-[#86FFD3] uppercase tracking-wider block">WITHIN IOCL TOLERANCE</span>
+            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Permits verified on site</p>
+            <p className="text-3xl font-black text-white tracking-tighter">{allRequests.length ? Math.round(allRequests.filter(isVerified).length / allRequests.length * 100) : 0}%</p>
+            <span className="text-[8px] font-bold text-[#86FFD3] uppercase tracking-wider block">{allRequests.filter(isVerified).length} of {allRequests.length} permits</span>
           </div>
 
           <div className="glass-panel p-6 rounded-2xl border border-slate-900 bg-black/40 space-y-2">
-            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">PATROL DISPATCH LATENCY</p>
-            <p className="text-3xl font-black text-white tracking-tighter">12.4 MINS</p>
-            <span className="text-[8px] font-bold text-[#7CEEFF] uppercase tracking-wider block">AVG RESPONSE TIME</span>
+            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">High-risk permits</p>
+            <p className="text-3xl font-black text-white tracking-tighter">{allRequests.filter(r => r.risk_level === 'high').length}</p>
+            <span className="text-[8px] font-bold text-[#7CEEFF] uppercase tracking-wider block">Need a patrol check before digging</span>
           </div>
         </div>
 
         <div className="glass-panel rounded-2xl border border-[#F37021]/15 p-6 space-y-4">
           <h2 className="text-xs font-black text-white uppercase tracking-widest flex items-center">
             <Zap className="h-4 w-4 mr-2 text-[#F37021]" />
-            Monthly Threat Mitigation Performance
+            Permits by risk level
           </h2>
-          <div className="h-48 w-full bg-black/20 rounded border border-slate-900 p-2 flex items-center justify-center relative">
-            <div className="absolute inset-0 flex items-end justify-between p-8 space-x-4">
-              <div className="w-full bg-slate-900 h-1/3 rounded-t-lg relative"><span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-500">APR</span></div>
-              <div className="w-full bg-slate-900 h-2/3 rounded-t-lg relative"><span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-500">MAY</span></div>
-              <div className="w-full bg-[#F37021]/40 h-full rounded-t-lg border-t border-[#F37021] relative">
-                <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[8px] font-black text-white">JUN</span>
-                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] font-black text-white">98%</div>
-              </div>
-            </div>
+          <div className="h-48 w-full bg-black/20 rounded border border-slate-900 px-8 pt-8 pb-3 flex items-end justify-between gap-4">
+            {[
+              { key: "high", label: "High (under 500 m)", color: "bg-[#e5484d]" },
+              { key: "medium", label: "Medium (500 m to 1 km)", color: "bg-[#e8a23a]" },
+              { key: "low", label: "Low (over 1 km)", color: "bg-[#4fb286]" },
+            ].map(({ key, label, color }) => {
+              const count = allRequests.filter(r => r.risk_level === key).length;
+              const share = allRequests.length ? count / allRequests.length : 0;
+              return (
+                <div key={key} className="flex-1 h-full flex flex-col justify-end items-center gap-2">
+                  <span className="text-sm font-black text-white">{count}</span>
+                  <div className={`w-full rounded-t-md ${color}`} style={{ height: `${Math.max(share * 100, 2)}%` }} />
+                  <span className="text-[9px] text-slate-400 text-center">{label}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1023,6 +989,12 @@ const AdminDashboard = () => {
       currentPath === '/admin/messages' ? 'SECURE SYSTEM CHAT PORTALS' :
       'IOCL COMMAND HUD'
     }>
+      {loadError && (
+        <div role="alert" className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {loadError}
+        </div>
+      )}
+
       {/* Dynamic Views Rendering based on subpath */}
       {currentPath === '/admin/users' && renderUsers()}
       {currentPath === '/admin/pipelines' && renderPipelines()}
@@ -1042,7 +1014,7 @@ const AdminDashboard = () => {
             {[
               { label: 'Active Pipelines', value: '3 Major Routes', sub: 'Mathura, Koyali, Haldia', icon: MapIcon, color: 'text-[#F37021]', bg: 'bg-[#F37021]/10', border: 'border-[#F37021]/20' },
               { label: 'ROW Excavation Permits', value: allRequests.length, sub: `${allRequests.filter(r => r.status === 'pending').length} Pending Review`, icon: FileText, color: 'text-[#86FFD3]', bg: 'bg-[#86FFD3]/10', border: 'border-[#86FFD3]/20' },
-              { label: 'AI Satellite Anomaly Alerts', value: imageryDetections.length, sub: `${imageryDetections.filter(d => d.risk_level === 'high').length} High Severity`, icon: Cpu, color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/20' },
+              { label: 'Detections (simulated)', value: imageryDetections.length, sub: `${imageryDetections.filter(d => d.risk_level === 'high').length} High Severity`, icon: Cpu, color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/20' },
               { label: 'Patrol Active Transmitters', value: patrolUsers.length, sub: `${patrolTracks.filter(t => t.is_offline).length} Offline Queueing`, icon: Users, color: 'text-[#7CEEFF]', bg: 'bg-[#7CEEFF]/10', border: 'border-[#7CEEFF]/20' }
             ].map((stat, idx) => (
               <div key={idx} className={`glass-panel p-6 rounded-2xl border ${stat.border} hover:border-[#7CEEFF]/30 transition-all duration-300 flex items-start justify-between cursor-default`}>
@@ -1306,8 +1278,12 @@ const AdminDashboard = () => {
                       onChange={(e) => setCgdEntityFilter(e.target.value)}
                     >
                       <option value="ALL">ALL OPERATORS</option>
-                      <option value="IGL">IGL ONLY</option>
-                      <option value="ADANI">ADANI GAS ONLY</option>
+                      <option value="INDRAPRASTHA">INDRAPRASTHA GAS</option>
+                      <option value="ADANI">ADANI GAS</option>
+                      <option value="TORRENT">TORRENT GAS</option>
+                      <option value="GAIL">GAIL GAS</option>
+                      <option value="GREEN GAS">GREEN GAS</option>
+                      <option value="BHARAT PETROLEUM">BHARAT PETROLEUM</option>
                     </select>
                   </div>
                 </div>
@@ -1334,19 +1310,18 @@ const AdminDashboard = () => {
                             key={ga.id} 
                             onClick={() => {
                               setSelectedGA(ga);
-                              if (ga.id === 1) setMapCenter([28.61, 77.20]);
-                              else setMapCenter([28.45, 77.02]);
+                              if (Number.isFinite(ga.lat) && Number.isFinite(ga.lng)) setMapCenter([ga.lat, ga.lng]);
                             }}
                             className={`hover:bg-[#86FFD3]/5 transition cursor-pointer ${selectedGA?.id === ga.id ? 'bg-[#86FFD3]/5' : ''}`}
                           >
                             <td className="px-6 py-4 font-black text-white uppercase">{ga?.name ?? 'Unnamed GA'}</td>
                             <td className="px-6 py-4 font-bold text-slate-400">{ga?.operator ?? 'N/A'}</td>
-                            <td className="px-6 py-4 font-bold text-slate-300">{targetKm} KM</td>
-                            <td className="px-6 py-4 font-black text-[#86FFD3]">{achievedKm} KM</td>
+                            <td className="px-6 py-4 font-bold text-slate-300">{targetKm} inch-km</td>
+                            <td className="px-6 py-4 font-black text-[#86FFD3]">{achievedKm} inch-km</td>
                             <td className="px-6 py-4">
                               <div className="flex items-center space-x-2">
                                 <div className="w-16 bg-slate-900 h-1.5 rounded-full overflow-hidden border border-slate-800">
-                                  <div className="bg-[#86FFD3] h-full" style={{ width: `${completionRatio}%` }}></div>
+                                  <div className="bg-[#86FFD3] h-full" style={{ width: `${Math.min(Number(completionRatio), 100)}%` }}></div>
                                 </div>
                                 <span className="font-black text-[9px] text-[#86FFD3]">{completionRatio}%</span>
                               </div>
@@ -1405,17 +1380,17 @@ const AdminDashboard = () => {
                 </div>
               </div>
 
-              {/* AI Satellite Sweep Trigger Card */}
+              {/* Simulated satellite sweep: the backend places test detections near real pipeline routes */}
               <div className="glass-panel rounded-2xl border border-[#F37021]/20 p-6 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-24 h-24 bg-[#F37021]/5 rounded-full blur-2xl"></div>
                 
                 <h2 className="font-black text-white text-xs uppercase tracking-widest mb-6 flex items-center">
                   <Radio className="h-4 w-4 mr-2 text-[#F37021]" />
-                  Satellite Surveillance Link
+                  Satellite sweep (simulated)
                 </h2>
 
                 <p className="text-[10px] text-slate-400 leading-normal mb-6 uppercase tracking-wider">
-                  Initiate a cognitive radar scan over the pipeline ROW corridors to detect physical encroachment threats (earthmovers, trenches) via AI imagery matching.
+                  No imagery provider is connected yet. A sweep creates a test detection near a real pipeline route and scores it with the same distance rule used for permits.
                 </p>
 
                 {isScanning ? (
@@ -1430,12 +1405,13 @@ const AdminDashboard = () => {
                     onClick={triggerSatelliteScan}
                     className="w-full bg-[#F37021] hover:bg-[#d95d16] text-white font-black py-4 rounded-xl text-[10px] uppercase tracking-[0.2em] transition shadow-lg shadow-[#F37021]/20 border border-[#F37021]/20"
                   >
-                    Initiate AI Satellite Sweep
+                    Run simulated sweep
                   </button>
                 )}
+                {scanError && <p role="alert" className="mt-3 text-[10px] text-red-300">{scanError}</p>}
               </div>
 
-              {/* AI Detections Feed */}
+              {/* Detections feed */}
               <div className="glass-panel rounded-2xl border border-red-500/20 p-6">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="font-black text-white text-xs uppercase tracking-widest flex items-center">

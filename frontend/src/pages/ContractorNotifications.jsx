@@ -15,7 +15,7 @@ import {
 const ContractorNotifications = () => {
   const [notifications, setNotifications] = useState([
     { id: 1, text: 'Safety Permit EXC-3001 is queued for physical patrol field survey verification.', time: '10:45 AM', type: 'warning', read: false },
-    { id: 2, text: 'Encroachment sweep detected heavy excavators within 100m Mathura transmission line.', time: '09:30 AM', type: 'critical', read: false },
+    { id: 2, text: 'Encroachment sweep detected heavy excavators within 500 m of the Mathura-Jalandhar pipeline (simulated).', time: '09:30 AM', type: 'critical', read: false },
     { id: 3, text: 'Safety Permit EXC-3002 fully verified and approved by IOCL Command Board.', time: 'Yesterday', type: 'success', read: true },
     { id: 4, text: 'Active patrol telemetry tracking link established on ROW corridor.', time: 'Yesterday', type: 'info', read: true },
     { id: 5, text: 'Excavation boundaries updated for Mathura district construction corridor.', time: '2 days ago', type: 'info', read: true }

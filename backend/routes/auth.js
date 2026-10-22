@@ -1,62 +1,54 @@
 const express = require('express');
-const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { getJwtSecret } = require('../lib/config');
+const { asyncHandler, badRequest, conflict } = require('../lib/http');
+const rateLimit = require('../lib/rateLimit');
 
-// Signup
-router.post('/signup', async (req, res) => {
-  const { name, email, password, role } = req.body;
-  try {
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = await db.createUser({
-      name,
-      email,
-      password: hashedPassword,
-      role: role || 'contractor'
-    });
-    
-    // Return safety response (exclude password)
-    res.status(201).json({
-      id: newUser.id,
-      name: newUser.name,
-      email: newUser.email,
-      role: newUser.role
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+const router = express.Router();
+// Attempts per minute per IP for signup and login (raised in tests).
+const AUTH_RATE_LIMIT = Number(process.env.AUTH_RATE_LIMIT) || 10;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role });
+
+// Self-service signup is for contractors only. Admin and patrol accounts are created by an admin,
+// so the requested role is ignored rather than trusted.
+router.post('/signup', rateLimit({ windowMs: 60_000, max: AUTH_RATE_LIMIT }), asyncHandler(async (req, res) => {
+  const { name, email, password } = req.body || {};
+  const errors = {};
+  if (typeof name !== 'string' || name.trim().length < 2) errors.name = 'Enter your name';
+  if (typeof email !== 'string' || !EMAIL.test(email.trim())) errors.email = 'Enter a valid email address';
+  if (typeof password !== 'string' || password.length < 8) errors.password = 'Use at least 8 characters';
+  if (Object.keys(errors).length) throw badRequest('Check the highlighted fields', errors);
+
+  const normalized = email.trim().toLowerCase();
+  if (await db.findUserByEmail(normalized)) throw conflict('An account with this email already exists');
+
+  const user = await db.createUser({
+    name: name.trim(),
+    email: normalized,
+    password: await bcrypt.hash(password, 10),
+    role: 'contractor',
+  });
+  res.status(201).json(publicUser(user));
+}));
+
+router.post('/login', rateLimit({ windowMs: 60_000, max: AUTH_RATE_LIMIT }), asyncHandler(async (req, res) => {
+  const { email, password } = req.body || {};
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
+    throw badRequest('Enter your email and password');
   }
-});
 
-// Login
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  try {
-    const user = await db.findUserByEmail(email);
-    if (!user) {
-      console.log(`Login failed: User ${email} not found`);
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      console.log(`Login failed: Incorrect password for ${email}`);
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign(
-      { id: user.id, role: user.role, name: user.name },
-      process.env.JWT_SECRET,
-      { expiresIn: '1d' }
-    );
-    res.json({
-      token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role }
-    });
-  } catch (err) {
-    console.error('Database Error during login:', err.message);
-    res.status(500).json({ error: 'Database connection error' });
+  const user = await db.findUserByEmail(email);
+  // Same message for unknown email and wrong password, so accounts cannot be discovered.
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return res.status(401).json({ error: "That email and password don't match an account" });
   }
-});
+
+  const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, getJwtSecret(), { expiresIn: '1d' });
+  res.json({ token, user: publicUser(user) });
+}));
 
 module.exports = router;

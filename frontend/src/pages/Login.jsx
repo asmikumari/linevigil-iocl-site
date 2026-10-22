@@ -1,31 +1,134 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authService } from '../services/api';
-import { Shield, Lock, Mail, ArrowRight, Terminal, Wifi, Radio, Cpu, Activity } from 'lucide-react';
+import IntroLoader, { shouldPlayIntro } from '../components/IntroLoader';
+import Terrain from '../components/Terrain';
+import CursorRing from '../components/CursorRing';
+import Scramble from '../components/Scramble';
+import './landing.css';
+
+const GITHUB_URL = 'https://github.com/asmikumari/linevigil-iocl-site';
+const INTRO_KEY = 'lv-intro-landing';
+
+// Public demo accounts from the README, used by the one-click demo buttons.
+const DEMO_PASSWORD = 'password123';
+const DEMO_ACCOUNTS = [
+  { label: 'Admin', email: 'admin@linevigil.com' },
+  { label: 'Patrol officer', email: 'patrol@linevigil.com' },
+  { label: 'Contractor', email: 'contractor@linevigil.com' },
+];
+
+const riskFor = (metres) => (metres < 500 ? 'high' : metres < 1000 ? 'medium' : 'low');
+const RISK_LABEL = { high: 'High risk', medium: 'Medium risk', low: 'Low risk' };
+
+// Splits text into words so they can animate one after another.
+const Words = ({ text, className, step, start = 0 }) =>
+  text.split(' ').map((word, i) => (
+    <span key={`${word}-${i}`} className={className} style={{ '--d': `${(start + i * step).toFixed(3)}s` }}>
+      {word}{' '}
+    </span>
+  ));
+
+const Mark = () => (
+  <svg width="24" height="24" viewBox="0 0 22 22" aria-hidden="true">
+    <path d="M2 17 C 7 15, 9 8, 20 4" fill="none" stroke="#f37021" strokeWidth="2.2" strokeLinecap="round" />
+    <circle cx="13.5" cy="13.5" r="3" fill="none" stroke="#ededed" strokeWidth="1.4" />
+  </svg>
+);
+
+const Arrow = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" className="lv-arrow">
+    <path d="M2 7h9M7.5 3.5 11 7l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const STEPS = [
+  { title: 'Request', body: 'A contractor marks the dig site on the right-of-way map and files an excavation permit.' },
+  { title: 'Measure', body: 'LineVigil measures the distance from the site to the pipeline centreline and sets the risk level.', risk: true },
+  { title: 'Dispatch', body: 'An admin reviews the permit and assigns a patrol officer to the site.' },
+  { title: 'Verify', body: 'The officer checks the site in person. GPS tracks and reports are saved offline and sync when signal returns.' },
+];
+
+const PORTALS = [
+  { role: 'Admin', body: 'Sees every pipeline, permit, patrol and alert on one map. Assigns patrols and reviews excavation machinery flagged by satellite sweeps.' },
+  { role: 'Patrol officer', body: 'Navigates the corridor, inspects assigned sites and reports incidents with photos. Keeps working in network dead zones.' },
+  { role: 'Contractor', body: 'Requests excavation permits on the map and follows each permit from filing to approval.' },
+];
+
+const HEADLINE = "Know who's digging.";
+const SUBTITLE = 'Right-of-way protection for oil and gas pipelines, before the first shovel goes in.';
+
+// Scroll-linked progress: the page progress line, heading fills and the step line.
+const useScrollMotion = (rootRef) => {
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const vh = window.innerHeight;
+      const max = document.documentElement.scrollHeight - vh;
+      const page = max > 0 ? Math.min(1, window.scrollY / max) : 0;
+      root.style.setProperty('--page', page.toFixed(4));
+      const badge = root.querySelector('.lv-progress-value');
+      if (badge) badge.textContent = `${String(Math.round(page * 100)).padStart(2, '0')}%`;
+
+      root.querySelectorAll('[data-scroll-fill]').forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const p = Math.min(1, Math.max(0, (vh * 0.92 - r.top) / (vh * 0.45)));
+        el.style.setProperty('--fill', `${(p * 100).toFixed(1)}%`);
+      });
+
+      const steps = root.querySelector('.lv-steps');
+      if (steps) {
+        const r = steps.getBoundingClientRect();
+        const p = Math.min(1, Math.max(0, (vh * 0.8 - r.top) / (vh * 0.5)));
+        steps.style.setProperty('--fill', `${(p * 100).toFixed(1)}%`);
+        steps.dataset.reached = String(Math.min(STEPS.length, Math.floor(p * STEPS.length + 0.35)));
+      }
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
+    update();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [rootRef]);
+};
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showIntro, setShowIntro] = useState(() => shouldPlayIntro(INTRO_KEY));
+  const [measure, setMeasure] = useState(null);
+  const rootRef = useRef(null);
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  useScrollMotion(rootRef);
+
+  const goToPortal = (role) => {
+    if (role === 'admin') navigate('/admin');
+    else if (role === 'patrol') navigate('/patrol');
+    else navigate('/dashboard');
+  };
+
+  const signIn = async (emailValue, passwordValue) => {
     setLoading(true);
     setError('');
     try {
-      const response = await authService.login({ email, password });
+      const response = await authService.login({ email: emailValue, password: passwordValue });
       login(response.data.user, response.data.token);
-      const role = response.data.user.role;
-      if (role === 'admin') navigate('/admin');
-      else if (role === 'patrol') navigate('/patrol');
-      else navigate('/dashboard');
+      goToPortal(response.data.user.role);
     } catch (err) {
-      console.warn('Backend connection failed, performing fail-safe client decryption.', err);
-      
+      console.warn('Backend connection failed, signing in with the offline demo accounts.', err);
+
       const mockUsers = {
         'admin@linevigil.com': { id: 1, name: 'Admin User', role: 'admin' },
         'patrol@linevigil.com': { id: 2, name: 'Patrol Officer 1', role: 'patrol' },
@@ -33,186 +136,205 @@ const Login = () => {
         'contractor@linevigil.com': { id: 3, name: 'Contractor User', role: 'contractor' }
       };
 
-      const normalizedEmail = email.trim().toLowerCase();
-      if (mockUsers[normalizedEmail] && password === 'password123') {
+      const normalizedEmail = emailValue.trim().toLowerCase();
+      if (mockUsers[normalizedEmail] && passwordValue === DEMO_PASSWORD) {
         const userObj = mockUsers[normalizedEmail];
         login(userObj, 'mock-secure-telemetry-token-key');
-        if (userObj.role === 'admin') navigate('/admin');
-        else if (userObj.role === 'patrol') navigate('/patrol');
-        else navigate('/dashboard');
+        goToPortal(userObj.role);
       } else {
-        setError('Security handshake failed. Invalid coordinate or decryption key.');
+        setError("That email and password don't match an account. Check them and try again.");
       }
     } finally {
       setLoading(false);
     }
   };
 
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    signIn(email, password);
+  };
+
+  const risk = measure ? riskFor(measure.metres) : null;
+
   return (
-    <div className="min-h-screen w-full bg-[#070B09] text-slate-100 flex flex-col justify-between relative overflow-hidden font-sans">
-      
-      {/* Background Neon Glow Nodes (Polaris Style) */}
-      <div className="absolute w-[600px] h-[600px] bg-[#F37021]/5 rounded-full blur-[120px] -top-60 -left-60 pointer-events-none"></div>
-      <div className="absolute w-[600px] h-[600px] bg-[#7CEEFF]/5 rounded-full blur-[120px] -bottom-60 -right-60 pointer-events-none"></div>
-      
-      {/* Grid Pattern mask */}
-      <div className="absolute inset-0 opacity-[0.25] pointer-events-none" 
-        style={{
-          backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(124, 238, 255, 0.15) 1px, transparent 0)',
-          backgroundSize: '32px 32px'
-        }}
-      ></div>
+    <div className={`lv${showIntro ? '' : ' is-ready'}`} ref={rootRef}>
+      {showIntro && (
+        <IntroLoader storageKey={INTRO_KEY} label="Plotting LineVigil" onDone={() => setShowIntro(false)} />
+      )}
+      <CursorRing />
 
-      {/* 1. TOP NAVBAR */}
-      <nav className="relative z-20 max-w-[1400px] w-full mx-auto px-6 md:px-12 h-20 flex items-center justify-between border-b border-slate-900/60">
-        <div className="flex items-center space-x-2.5">
-          <span className="size-2 rounded-full bg-[#F37021] animate-pulse shadow-[0_0_10px_#F37021]"></span>
-          <span className="font-display font-extrabold tracking-widest text-sm uppercase text-white logo-font">LINEVIGIL</span>
-        </div>
-        <div className="flex items-center space-x-3">
-          <span className="inline-flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.2em] text-[#7CEEFF] px-3 py-1 rounded-full bg-[#7CEEFF]/5 border border-[#7CEEFF]/10">
-            <span className="size-1.5 rounded-full bg-[#7CEEFF] animate-pulse"></span>
-            SYSTEM NOMINAL
-          </span>
-        </div>
-      </nav>
+      <div className="lv-progress" aria-hidden="true">
+        <span className="lv-progress-bar" />
+        <span className="lv-progress-value">00%</span>
+      </div>
 
-      {/* 2. MAIN SPLIT GRID BODY */}
-      <main className="relative z-10 flex-1 max-w-[1400px] w-full mx-auto px-6 md:px-12 py-12 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-        
-        {/* Left Column: Polaris Typography & Live Telemetry Details (7 Cols) */}
-        <div className="lg:col-span-7 space-y-10 text-left">
-          
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-800 bg-[#111917]/50 text-[10px] font-mono tracking-tight text-slate-400">
-            <span className="text-[#F37021]">●</span>
-            <span className="text-slate-500 uppercase tracking-widest">Version 2.5 —</span>
-            <span className="text-[#7CEEFF] uppercase">ROW Protection Suite</span>
+      <section className="lv-hero" id="top">
+        <Terrain onMeasure={setMeasure} />
+
+        {measure && (
+          <div
+            className={`lv-readout risk-${risk}`}
+            style={{
+              // Flip to the other side of the pointer near the right and bottom edges.
+              transform: `translate(${measure.x > window.innerWidth - 240 ? `calc(${measure.x - 18}px - 100%)` : `${measure.x + 18}px`}, ${measure.y > window.innerHeight - 90 ? `calc(${measure.y - 18}px - 100%)` : `${measure.y + 18}px`})`,
+            }}
+            aria-hidden="true"
+          >
+            <span>{measure.metres.toLocaleString('en-IN')} m from pipeline</span>
+            <span className="lv-readout-risk">{RISK_LABEL[risk]}</span>
           </div>
+        )}
 
-          <h1 className="font-sans font-black tracking-tighter leading-[1.02] text-white text-[clamp(2rem,5.5vw,4.5rem)]">
-            The intelligence layer for <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#F37021] to-[#7CEEFF]">energy lifelines.</span>
+        <header className="lv-header">
+          <a className="lv-brand" href="#top">
+            <Mark />
+            <span className="lv-mono">LineVigil <span className="lv-dim lv-hide-sm">/ Pipeline safety</span></span>
+          </a>
+          <nav className="lv-nav" aria-label="Main">
+            <Scramble as="a" href="#how-it-works" className="lv-navlink lv-hide-sm" text="How it works"><sup>01</sup></Scramble>
+            <Scramble as="a" href="#portals" className="lv-navlink lv-hide-sm" text="Portals"><sup>02</sup></Scramble>
+            <Scramble as="a" href={GITHUB_URL} target="_blank" rel="noreferrer" className="lv-navlink lv-hide-sm" text="GitHub"><sup>03</sup></Scramble>
+            <Scramble as="a" href="#sign-in" className="lv-pill" text="Sign in" />
+          </nav>
+        </header>
+
+        <div className="lv-meta lv-mono">
+          <span>LineVigil · right-of-way protection</span>
+          <span className="lv-hide-sm">Base · 28.54° N, 77.39° E · Noida</span>
+          <span className="lv-hide-sm">Built at IOCL, 2026</span>
+        </div>
+
+        <div className="lv-hero-copy">
+          <h1 aria-label={HEADLINE}>
+            <span aria-hidden="true"><Words text={HEADLINE} className="lv-hw" step={0.12} start={0.1} /></span>
           </h1>
-
-          <p className="text-sm md:text-base text-slate-400 leading-relaxed max-w-xl">
-            LineVigil integrates cross-country pipeline geometry, real-time patrol officer telemetry, and satellite imagery analysis into a single, cohesive threat mitigation HUD. Detect excavation hazards instantly before accidents strike.
+          <p className="lv-sub">
+            <Words text={SUBTITLE} className="lv-lw" step={0.035} start={0.55} />
+            <span className="lv-caret" aria-hidden="true" />
           </p>
-
-          {/* High-Tech live telemetry overview */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-lg pt-6 border-t border-slate-900/60">
-            <div className="bg-[#111917]/35 border border-slate-900 rounded-xl p-4 space-y-1.5">
-              <span className="text-[8px] font-mono text-slate-500 uppercase tracking-widest block">Core Corridor</span>
-              <span className="text-xs font-bold text-white block">Mathura-Jalandhar</span>
-              <span className="text-[8px] font-bold text-[#86FFD3] uppercase tracking-wider flex items-center">
-                <span className="size-1 rounded-full bg-emerald-400 mr-1 animate-pulse"></span>
-                Nominal Flow
-              </span>
-            </div>
-            <div className="bg-[#111917]/35 border border-slate-900 rounded-xl p-4 space-y-1.5">
-              <span className="text-[8px] font-mono text-slate-500 uppercase tracking-widest block">Active Patrols</span>
-              <span className="text-xs font-bold text-white block">02 Units Linked</span>
-              <span className="text-[8px] font-bold text-[#7CEEFF] uppercase tracking-wider flex items-center">
-                <span className="size-1 rounded-full bg-[#7CEEFF] mr-1 animate-pulse"></span>
-                Live GPS Sync
-              </span>
-            </div>
-            <div className="bg-[#111917]/35 border border-slate-900 rounded-xl p-4 space-y-1.5">
-              <span className="text-[8px] font-mono text-slate-500 uppercase tracking-widest block">AI Radar sweeps</span>
-              <span className="text-xs font-bold text-white block">04 Threat Anchors</span>
-              <span className="text-[8px] font-bold text-rose-400 uppercase tracking-wider flex items-center">
-                <span className="size-1 rounded-full bg-rose-400 mr-1 animate-pulse"></span>
-                01 Alert Pending
-              </span>
-            </div>
-          </div>
-
+          <ul className="lv-tags lv-mono lv-rise" aria-label="Highlights">
+            <li><i className="dot" />3 pipeline routes</li>
+            <li><i className="dot" />500 m and 1 km risk bands</li>
+            <li className="lv-hide-touch"><i className="tri" />Point anywhere to measure the distance to the pipeline</li>
+            <li className="lv-show-touch"><i className="tri" />Tap anywhere to measure the distance to the pipeline</li>
+          </ul>
         </div>
 
-        {/* Right Column: Secure Access Panel (5 Cols) */}
-        <div className="lg:col-span-5 flex justify-center lg:justify-end">
-          <div className="max-w-md w-full glass-panel border border-[#7CEEFF]/15 rounded-2xl shadow-2xl p-8 relative overflow-hidden bg-black/60">
-            
-            <div className="absolute top-4 right-6 flex items-center space-x-1.5 text-[8px] hud-telemetry text-slate-500 font-bold">
-              <Wifi className="h-3 w-3 text-emerald-400" />
-              <span>SYS SECURE LINK</span>
-            </div>
+        <div className="lv-hero-foot lv-rise">
+          <p>Permits, proximity checks, patrol dispatch and offline field checks.<br />One live map, built during an SDE internship at Indian Oil.</p>
+          <div className="lv-actions">
+            <Scramble as="a" href="#sign-in" className="lv-pill" text="Try the live demo"><Arrow /></Scramble>
+            <Scramble as="a" href={GITHUB_URL} target="_blank" rel="noreferrer" className="lv-pill lv-pill-dark" text="View the code" />
+          </div>
+        </div>
+      </section>
 
-            <div className="flex flex-col items-start mb-8">
-              <h2 className="text-lg font-black text-white uppercase tracking-wider">COMMAND CENTER</h2>
-              <p className="text-slate-500 text-[9px] font-bold uppercase tracking-[0.2em] mt-1">Provide credentials to sync telemetry</p>
-            </div>
+      <main>
+        <section className="lv-section" id="how-it-works">
+          <div className="lv-section-head lv-mono">
+            <span>[01] How it works</span>
+            <span className="lv-dim">Four steps, one permit</span>
+          </div>
+          <h2 data-scroll-fill>How a dig gets cleared</h2>
+          <p className="lv-intro">
+            Every excavation near the pipeline follows the same four steps, from the contractor's request to an
+            officer standing on the site.
+          </p>
+          <ol className="lv-steps" data-reached="0">
+            {STEPS.map((step) => (
+              <li key={step.title}>
+                <h3>{step.title}</h3>
+                <p>{step.body}</p>
+                {step.risk && (
+                  <div className="lv-risk lv-mono" aria-label="Risk levels by distance">
+                    <span><i style={{ background: 'var(--high)' }} />High &lt; 500 m</span>
+                    <span><i style={{ background: 'var(--medium)' }} />Medium &lt; 1 km</span>
+                    <span><i style={{ background: 'var(--low)' }} />Low beyond</span>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
 
-            {error && (
-              <div className="bg-red-950/40 border border-red-500/30 text-red-400 p-4 rounded-xl mb-6 text-[9px] font-black uppercase tracking-widest leading-normal">
-                {error}
+        <section className="lv-section" id="portals">
+          <div className="lv-section-head lv-mono">
+            <span>[02] Portals</span>
+            <span className="lv-dim">Same live map, three jobs</span>
+          </div>
+          <h2 data-scroll-fill>One system, three portals</h2>
+          <div className="lv-portals">
+            {PORTALS.map((p) => (
+              <div className="lv-portal" key={p.role}>
+                <h3>{p.role}</h3>
+                <p>{p.body}</p>
               </div>
-            )}
+            ))}
+          </div>
+        </section>
 
-            <form onSubmit={handleSubmit} className="space-y-6">
-              
-              <div className="space-y-2">
-                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Coordinate (Email)</label>
-                <div className="relative group">
-                  <Mail className="absolute left-4 top-3.5 h-4 w-4 text-slate-500 group-focus-within:text-[#7CEEFF] transition-colors" />
-                  <input
-                    type="email"
-                    required
-                    className="w-full pl-12 pr-4 py-3.5 bg-black/50 border border-slate-900 rounded-xl focus:border-[#7CEEFF]/50 focus:ring-4 focus:ring-[#7CEEFF]/5 outline-none transition-all text-xs font-bold text-white uppercase placeholder:text-slate-700"
-                    placeholder="identity@iocl.co.in"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
+        <section className="lv-section lv-signin" id="sign-in">
+          <div className="lv-section-head lv-mono">
+            <span>[03] Sign in</span>
+            <span className="lv-dim">Demo data, not real IOCL records</span>
+          </div>
+          <div className="lv-signin-grid">
+            <div>
+              <h2 data-scroll-fill>Sign in to LineVigil</h2>
+              <p className="lv-intro">Use your account, or explore the demo as any of the three roles.</p>
+              <div className="lv-demo">
+                <p className="lv-mono lv-dim">Explore the demo as</p>
+                <div className="lv-demo-roles">
+                  {DEMO_ACCOUNTS.map((a) => (
+                    <Scramble
+                      key={a.email}
+                      as="button"
+                      type="button"
+                      className="lv-pill lv-pill-dark"
+                      disabled={loading}
+                      onClick={() => signIn(a.email, DEMO_PASSWORD)}
+                      text={a.label}
+                    />
+                  ))}
                 </div>
               </div>
+            </div>
 
-              <div className="space-y-2">
-                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Decryption Key (Password)</label>
-                <div className="relative group">
-                  <Lock className="absolute left-4 top-3.5 h-4 w-4 text-slate-500 group-focus-within:text-[#7CEEFF] transition-colors" />
-                  <input
-                    type="password"
-                    required
-                    className="w-full pl-12 pr-4 py-3.5 bg-black/50 border border-slate-900 rounded-xl focus:border-[#7CEEFF]/50 focus:ring-4 focus:ring-[#7CEEFF]/5 outline-none transition-all text-xs font-bold text-white placeholder:text-slate-700"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
+            <form className="lv-form" onSubmit={handleSubmit}>
+              {error && <p className="lv-error" role="alert">{error}</p>}
+              <div className="lv-field">
+                <label htmlFor="lv-email">Email</label>
+                <input
+                  id="lv-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  placeholder="name@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
               </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-[#111917] hover:bg-[#1c2a27] border border-[#7CEEFF]/30 text-white font-black py-4 rounded-xl transition-all shadow-lg hover:shadow-[#7CEEFF]/10 flex items-center justify-center group disabled:opacity-50 text-[10px] uppercase tracking-[0.2em] relative"
-              >
-                <span>{loading ? 'AUTHSYNCING...' : 'ESTABLISH LINK'}</span>
-                <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform text-[#7CEEFF]" />
-              </button>
-
+              <div className="lv-field">
+                <label htmlFor="lv-password">Password</label>
+                <input
+                  id="lv-password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              <Scramble as="button" type="submit" className="lv-pill lv-pill-wide" disabled={loading} text={loading ? 'Signing in…' : 'Sign in'} />
             </form>
-
-            {/* Monospace Credentials hints at bottom */}
-            <div className="mt-8 pt-6 border-t border-[#7CEEFF]/5 text-left font-bold hud-telemetry text-[8px] text-slate-500 space-y-1">
-              <p className="uppercase text-slate-400 text-center tracking-widest mb-1.5">CREDENTIAL TELEMETRY HINTS</p>
-              <div className="bg-black/40 p-3 rounded border border-slate-900 leading-relaxed font-mono">
-                ADMIN: <span className="text-[#7CEEFF]">admin@linevigil.com</span> / password123<br/>
-                PATROL 1: <span className="text-[#7CEEFF]">patrol@linevigil.com</span> / password123<br/>
-                CONTRACTOR: <span className="text-[#7CEEFF]">contractor@linevigil.com</span> / password123
-              </div>
-            </div>
-
           </div>
-        </div>
-
+        </section>
       </main>
 
-      {/* 3. FOOTER */}
-      <footer className="relative z-20 border-t border-slate-900/60 py-6 text-center text-slate-500 font-mono text-[9px] uppercase tracking-[0.2em]">
-        <div className="max-w-[1400px] w-full mx-auto px-6 md:px-12 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <div>LAT 28.6139 · LONG 77.2090 · IOCL PLHO NOIDA</div>
-          <div>© {new Date().getFullYear()} LineVigil OS. All rights reserved.</div>
-        </div>
+      <footer className="lv-footer lv-mono">
+        <span>Built by Asmi Kumari · B.Tech CSE · Amity University Noida</span>
+        <a href={GITHUB_URL} target="_blank" rel="noreferrer">Source on GitHub</a>
       </footer>
-
     </div>
   );
 };

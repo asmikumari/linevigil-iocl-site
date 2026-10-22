@@ -19,6 +19,14 @@ import {
   CheckCircle2
 } from 'lucide-react';
 
+// The API's error message (and the first field problem, if any), or a fallback when it gave none.
+const apiError = (err, fallback) => {
+  const data = err.response?.data;
+  if (!data?.error) return fallback;
+  const field = data.details && Object.values(data.details)[0];
+  return field ? `${data.error}: ${field}` : data.error;
+};
+
 const ContractorDashboard = () => {
   const { user } = useAuth();
   const [pipelines, setPipelines] = useState(null);
@@ -54,18 +62,8 @@ const ContractorDashboard = () => {
       setPipelines(pipeRes.data);
       setMyRequests(reqRes.data);
     } catch (err) {
-      console.warn('Backend link down. Operating in standalone client-side Contractor GIS fallback mode.', err);
-      
-      setPipelines({
-        type: 'FeatureCollection',
-        features: [
-          { type: 'Feature', properties: { id: 1, name: 'IOCL-PL-01 (Mathura-Jalandhar)', type: 'product' }, geometry: { type: 'LineString', coordinates: [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50], [76.50, 31.00]] } }
-        ]
-      });
-
-      setMyRequests([
-        { id: 1, contractor_name: user?.name || 'Contractor User', company_name: 'Buildwell Ltd.', work_date: '2026-06-12', purpose: 'Road Construction', status: 'pending', risk_level: 'high', distance_to_pipeline: 120.5, lat: 28.58, lng: 77.12 }
-      ]);
+      console.warn('Could not load permits', err);
+      setMessage({ type: 'error', text: apiError(err, 'Your permits could not be loaded because the LineVigil API is not reachable.') });
     }
   };
 
@@ -74,63 +72,11 @@ const ContractorDashboard = () => {
     try {
       const res = await excavationService.checkCollision({ lat, lng });
       setCollisionInfo(res.data);
+      setMessage((m) => (m?.type === 'error' ? null : m));
     } catch (err) {
-      console.warn('Backend check-collision failed. Executing local GIS calculations.', err);
-      
-      // Client-side math implementation (fallback)
-      const mockPipelines = [
-        { name: 'IOCL-PL-01 (Mathura-Jalandhar)', geom: [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50], [76.50, 31.00]] },
-        { name: 'IOCL-PL-02 (Koyali-Sanganer)', geom: [[73.18, 22.30], [73.50, 23.50], [74.50, 25.50], [75.80, 26.90]] },
-        { name: 'IOCL-PL-03 (Paradip-Haldia)', geom: [[86.67, 20.27], [87.50, 21.50], [88.20, 22.50]] }
-      ];
-
-      function pointToSegmentDistance(px, py, ax, ay, bx, by) {
-        const dx = bx - ax;
-        const dy = by - ay;
-        if (dx === 0 && dy === 0) return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2);
-        const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
-        const clampedT = Math.max(0, Math.min(1, t));
-        const nearestX = ax + clampedT * dx;
-        const nearestY = ay + clampedT * dy;
-        return Math.sqrt((px - nearestX) ** 2 + (py - nearestY) ** 2);
-      }
-
-      let minDistance = Infinity;
-      let nearestPipe = null;
-
-      for (const pipe of mockPipelines) {
-        let minPipeDist = Infinity;
-        for (let i = 0; i < pipe.geom.length - 1; i++) {
-          const d = pointToSegmentDistance(lng, lat, pipe.geom[i][0], pipe.geom[i][1], pipe.geom[i+1][0], pipe.geom[i+1][1]);
-          if (d < minPipeDist) minPipeDist = d;
-        }
-        const dMeters = minPipeDist * 111320;
-        if (dMeters < minDistance) {
-          minDistance = dMeters;
-          nearestPipe = pipe;
-        }
-      }
-
-      const distance = minDistance;
-      const pipelineName = nearestPipe ? nearestPipe.name : 'Unknown Pipeline';
-      let riskLevel = 'low';
-      let collisionStatus = 'safe';
-
-      if (distance < 100) {
-        riskLevel = 'high';
-        collisionStatus = 'danger';
-      } else if (distance < 500) {
-        riskLevel = 'medium';
-        collisionStatus = 'warning';
-      }
-
-      setCollisionInfo({
-        distanceToPipeline: distance,
-        pipelineName,
-        riskLevel,
-        collisionStatus,
-        overlappingPermits: []
-      });
+      console.warn('Proximity check failed', err);
+      setCollisionInfo(null);
+      setMessage({ type: 'error', text: apiError(err, 'The distance to the pipeline could not be checked. Try again when you are back online.') });
     } finally {
       setCheckingCollision(false);
     }
@@ -155,28 +101,8 @@ const ContractorDashboard = () => {
       setSelectedLocation(null);
       loadData();
     } catch (err) {
-      console.warn('Backend permit create failed. Simulating client-side submission.', err);
-      
-      // Simulate permit cache locally
-      setTimeout(() => {
-        const localRequest = {
-          id: Date.now(),
-          contractor_name: user?.name || 'Contractor User',
-          company_name: formData.companyName,
-          work_date: formData.workDate,
-          purpose: formData.purpose,
-          lat: selectedLocation.lat,
-          lng: selectedLocation.lng,
-          distance_to_pipeline: collisionInfo ? collisionInfo.distanceToPipeline : 1000,
-          risk_level: collisionInfo ? collisionInfo.riskLevel : 'low',
-          status: 'pending'
-        };
-        
-        setMyRequests(prev => [localRequest, ...prev]);
-        setMessage({ type: 'success', text: 'Permit safety request submitted successfully (Local Offline Cache)' });
-        setFormData({ companyName: '', workDate: '', purpose: 'Road Construction' });
-        setSelectedLocation(null);
-      }, 1000);
+      console.warn('Permit could not be filed', err);
+      setMessage({ type: 'error', text: apiError(err, 'The permit was not filed because the LineVigil API is not reachable. Your details are still in the form.') });
     } finally {
       setLoading(false);
     }
@@ -324,7 +250,7 @@ const ContractorDashboard = () => {
 
                 {collisionInfo.collisionStatus === 'danger' && (
                   <p className="text-[8px] font-bold text-red-400 leading-normal border-l-2 border-red-500 pl-3 uppercase tracking-wider">
-                    CRITICAL: Safety guidelines prohibit excavation within the 100m core corridor without direct physical patrol markers.
+                    High risk: this site is within 500 m of a pipeline. Do not dig until a patrol officer has verified the site.
                   </p>
                 )}
               </div>

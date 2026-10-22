@@ -1,439 +1,353 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, GeoJSON, Circle, Polyline, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import '../motion.css';
+import '../app.css';
 import L from 'leaflet';
 
-// Setup Custom Neon Marker Icons using L.divIcon for a futuristic HUD theme
-const createMarkerIcon = (color, shadowColor) => {
-  return L.divIcon({
-    className: 'custom-hud-marker',
-    html: `
-      <div class="relative flex items-center justify-center w-8 h-8">
-        <div class="absolute w-3 h-3 rounded-full" style="background-color: ${color}; box-shadow: 0 0 10px ${shadowColor};"></div>
-        <div class="absolute w-6 h-6 rounded-full border border-dashed animate-spin" style="border-color: ${color}90; animation-duration: 6s;"></div>
-      </div>
-    `,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16]
+const reducedMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+// Basemap: CARTO's dark tiles need a free Basemaps API key (https://carto.com/basemaps/apikey), passed as ?key=.
+// Set VITE_CARTO_API_KEY in frontend/.env locally and in the Vercel project; without it the map uses Esri's
+// keyless dark basemap so it never shows the "API key required" watermark.
+const CARTO_KEY = import.meta.env.VITE_CARTO_API_KEY;
+const BASEMAP = CARTO_KEY
+  ? {
+      url: `https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(CARTO_KEY)}`,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    }
+  : {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, &copy; OpenStreetMap contributors',
+    };
+
+const RISK_COLOR ={ high: 'var(--high)', medium: 'var(--medium)', low: 'var(--low)' };
+const PIPE_COLOR = { product: '#f37021', crude: '#ededed', gas: '#9097a0' };
+
+// Markers are plain HTML so they can use the app's CSS animations (scale-in, radar rings).
+const dotIcon = ({ color, solid = false, rings = 0, delay = 0 }) =>
+  L.divIcon({
+    className: 'lv-marker',
+    html: `<div class="lv-mk" style="--c:${color};--d:${delay}s">
+      ${rings ? '<span class="lv-mk-ring"></span>' : ''}${rings > 1 ? '<span class="lv-mk-ring two"></span>' : ''}
+      <span class="lv-mk-dot${solid ? ' is-solid' : ''}"></span>
+    </div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -10],
   });
-};
 
-const defaultIcon = createMarkerIcon('#F37021', '#F37021'); // IOCL Orange
-const patrolIcon = createMarkerIcon('#7CEEFF', '#7CEEFF');  // Neon Cyan
-const contractorIcon = createMarkerIcon('#86FFD3', '#86FFD3'); // Mint Green
+const detectionIcon = (confidence, delay) =>
+  L.divIcon({
+    className: 'lv-marker',
+    html: `<div class="lv-mk" style="--c:var(--high);--d:${delay}s">
+      <span class="lv-mk-ring"></span><span class="lv-mk-ring two"></span>
+      <span class="lv-mk-detect"></span>
+      <span class="lv-mk-label">${Math.round((confidence || 0) * 100)}%</span>
+    </div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -12],
+  });
 
-// Target crosshair for AI satellite anomalies
-const anomalyIcon = L.divIcon({
-  className: 'custom-anomaly-icon',
-  html: `
-    <div class="relative w-12 h-12 flex items-center justify-center">
-      <div class="absolute inset-0 border border-red-500/80 animate-pulse rounded-sm"></div>
-      <div class="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-red-500"></div>
-      <div class="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-red-500"></div>
-      <div class="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-red-500"></div>
-      <div class="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-red-500"></div>
-      <div class="absolute w-1.5 h-1.5 bg-red-600 rounded-full animate-ping"></div>
-      <span class="absolute -bottom-5 text-[8px] bg-red-950/90 text-red-400 font-black border border-red-500/30 px-1 py-0.5 whitespace-nowrap rounded-sm tracking-widest hud-telemetry">OBJ DETECTED</span>
-    </div>
-  `,
-  iconSize: [48, 48],
-  iconAnchor: [24, 24]
+const pickIcon = L.divIcon({
+  className: 'lv-marker',
+  html: '<div class="lv-mk"><span class="lv-mk-pick"></span></div>',
+  iconSize: [28, 28],
+  iconAnchor: [14, 14],
+  popupAnchor: [0, -12],
 });
 
-// Location Marker Selection Event Listener
+const riskTag = (risk) => `lv-tag lv-mono ${risk === 'high' ? 'is-high' : risk === 'medium' ? 'is-medium' : risk === 'low' ? 'is-low' : 'is-neutral'}`;
+
+// Contractor picks a dig site by clicking the map.
 const LocationMarker = ({ position, setPosition }) => {
   useMapEvents({
     click(e) {
-      if (setPosition) {
-        setPosition(e.latlng);
-      }
+      if (setPosition) setPosition(e.latlng);
     },
   });
 
   return !position ? null : (
-    <Marker 
-      position={position} 
-      draggable={true}
-      icon={contractorIcon}
-      eventHandlers={{
-        dragend: (e) => {
-          setPosition(e.target.getLatLng());
-        },
-      }}
+    <Marker
+      position={position}
+      draggable
+      icon={pickIcon}
+      eventHandlers={{ dragend: (e) => setPosition(e.target.getLatLng()) }}
     >
       <Popup>
-        <div className="p-2 hud-telemetry">
-          <div className="text-[10px] font-black text-[#86FFD3] uppercase tracking-widest mb-1.5">Selected Excavation Point</div>
-          <div className="text-[11px] font-black text-slate-300 bg-slate-950/80 p-2 rounded-lg border border-slate-800">
-            LAT: {position.lat.toFixed(6)}<br/>
-            LNG: {position.lng.toFixed(6)}
+        <div className="lv-pop">
+          <div>
+            <span className="lv-pop-kicker lv-mono">Selected dig site</span>
+            <h3>{position.lat.toFixed(5)}° N, {position.lng.toFixed(5)}° E</h3>
           </div>
-          <p className="text-[9px] text-[#7CEEFF] mt-2 font-bold uppercase tracking-wider italic animate-pulse">Ready to deploy. Drag to adjust.</p>
+          <p>Drag the marker to adjust the site.</p>
         </div>
       </Popup>
     </Marker>
   );
 };
 
-// Sub-component to pan the map programmatically when mapCenter shifts
+// Pans to a new centre when the parent asks for one.
 const ChangeMapCenter = ({ center }) => {
   const map = useMap();
   useEffect(() => {
-    if (center) {
-      map.setView(center, 9, { animate: true });
-    }
+    if (center) map.flyTo(center, 9, { duration: reducedMotion() ? 0 : 1.1 });
   }, [center, map]);
   return null;
 };
 
-const Map = ({ 
-  pipelines, 
-  requests, 
-  imageryDetections = [], 
-  patrolTracks = [], 
-  onLocationSelect, 
+// Camera intro: start wide, then glide into the corridor.
+const FlyIn = ({ to, zoom }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (reducedMotion()) { map.setView(to, zoom); return undefined; }
+    const id = setTimeout(() => map.flyTo(to, zoom, { duration: 1.6, easeLinearity: 0.2 }), 150);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+};
+
+// Live cursor coordinates for the readout.
+const CursorTracker = ({ onMove }) => {
+  useMapEvents({
+    mousemove(e) { onMove(e.latlng); },
+    mouseout() { onMove(null); },
+  });
+  return null;
+};
+
+// Draw each pipeline along its length once, when the map first shows it.
+const drawOnAdd = (layer) => {
+  layer.once('add', () => {
+    const el = layer.getElement?.();
+    if (!el || typeof el.getTotalLength !== 'function' || reducedMotion()) return;
+    el.style.setProperty('--len', el.getTotalLength());
+    el.classList.add('lv-map-draw');
+    el.addEventListener('animationend', () => el.classList.remove('lv-map-draw'), { once: true });
+  });
+};
+
+const Map = ({
+  pipelines,
+  requests,
+  imageryDetections = [],
+  patrolTracks = [],
+  onLocationSelect,
   selectedLocation,
   showImageryScan = false,
   showBufferZones = true,
   mapCenter,
-  selectedGA
+  selectedGA,
 }) => {
-  const center = [28.6139, 77.2090]; // Mathura-Jalandhar/Delhi region
-  const [mapStyle, setMapStyle] = useState('dark'); // 'dark' or 'satellite'
-  const [isLightTheme, setIsLightTheme] = useState(document.body.classList.contains('light'));
+  const center = [28.6139, 77.209];
+  const [mapStyle, setMapStyle] = useState('dark');
+  const [cursor, setCursor] = useState(null);
+  const frameRef = useRef(0);
 
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setIsLightTheme(document.body.classList.contains('light'));
-    });
-    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-    return () => observer.disconnect();
-  }, []);
-
-  // Custom Neon Pipeline Line Styles
-  const getPipelineStyle = (type, layerType = 'core') => {
-    let color = '#F37021'; // Default IOCL Orange
-    if (type === 'crude') color = '#F37021'; // Orange
-    if (type === 'product') color = '#7CEEFF'; // Cyan glow
-    if (type === 'gas') color = '#86FFD3'; // Mint green
-
-    if (layerType === 'core') {
-      return { color, weight: 3, opacity: 0.95, lineJoin: 'round', className: 'neon-glow-line' };
-    } else if (layerType === 'danger-buffer') {
-      return { color: '#ef4444', weight: 16, opacity: 0.15, lineJoin: 'round', className: 'danger-glow-zone' }; // 100m High Risk
-    } else {
-      return { color: '#eab308', weight: 45, opacity: 0.05, lineJoin: 'round', className: 'warning-glow-zone' }; // 500m Buffer
-    }
+  const onCursor = (latlng) => {
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = requestAnimationFrame(() => setCursor(latlng));
   };
 
+  const routeCount = pipelines?.features?.length || 0;
+  const permitCount = requests?.filter((r) => r.status !== 'closed').length || 0;
+  const detectionCount = imageryDetections?.length || 0;
+  const trackLine = patrolTracks?.length > 1 ? patrolTracks.map((t) => [t.lat, t.lng]) : null;
+
   return (
-    <div className="h-full w-full relative overflow-hidden bg-black">
-      
-      {/* High-tech Corner HUD Overlays (Polaris style) */}
-      <div className="absolute top-4 left-4 z-[1000] pointer-events-none hud-telemetry bg-black/85 border border-[#7CEEFF]/30 px-3 py-2 rounded-xl text-[8px] font-black text-slate-400 uppercase tracking-widest flex items-center space-x-2">
-        <span className="size-1.5 rounded-full bg-[#7CEEFF] animate-pulse"></span>
-        <span>HUD: Operational Corridor</span>
+    <div className={`lv-map ${mapStyle === 'satellite' ? 'is-sat' : 'is-dark'}`}>
+      <div className="lv-map-chip lv-mono">
+        <span><strong>{routeCount}</strong> routes</span>
+        {permitCount > 0 && <span><strong>{permitCount}</strong> permits</span>}
+        {detectionCount > 0 && <span><strong>{detectionCount}</strong> detections</span>}
       </div>
 
-      <div className="absolute top-4 right-12 z-[1000] pointer-events-none hud-telemetry bg-black/85 border border-[#F37021]/30 px-3 py-2 rounded-xl text-[8px] font-black text-[#F37021] uppercase tracking-widest flex items-center space-x-2">
-        <span className="size-1.5 rounded-full bg-[#F37021] animate-ping" style={{ animationDuration: '2s' }}></span>
-        <span>SATELLITE SYNC: ACTIVE</span>
+      <div className="lv-map-switch" role="group" aria-label="Map style">
+        <button type="button" aria-pressed={mapStyle === 'dark'} onClick={() => setMapStyle('dark')}>Map</button>
+        <button type="button" aria-pressed={mapStyle === 'satellite'} onClick={() => setMapStyle('satellite')}>Satellite</button>
       </div>
 
-      {/* Map Style Selector Widget */}
-      <div className="absolute top-16 right-12 z-[1000] hud-telemetry bg-black/85 border border-[#7CEEFF]/30 p-2 rounded-xl text-[8px] font-black uppercase tracking-widest flex flex-col space-y-1.5 pointer-events-auto">
-        <span className="text-[6px] text-slate-500 mb-0.5 tracking-wider">MAP RENDERER</span>
-        <div className="flex space-x-1">
-          <button 
-            onClick={() => setMapStyle('dark')}
-            className={`px-2 py-1 rounded transition-colors ${
-              mapStyle === 'dark' 
-                ? 'bg-[#7CEEFF]/20 text-[#7CEEFF] border border-[#7CEEFF]/30' 
-                : 'text-slate-500 hover:text-white'
-            }`}
-          >
-            Vector Dark
-          </button>
-          <button 
-            onClick={() => setMapStyle('satellite')}
-            className={`px-2 py-1 rounded transition-colors ${
-              mapStyle === 'satellite' 
-                ? 'bg-[#7CEEFF]/20 text-[#7CEEFF] border border-[#7CEEFF]/30' 
-                : 'text-slate-500 hover:text-white'
-            }`}
-          >
-            Google Sat
-          </button>
-        </div>
+      <div className="lv-map-coords lv-mono" aria-live="off">
+        {cursor
+          ? <>{cursor.lat.toFixed(4)}° N <span>/</span> {cursor.lng.toFixed(4)}° E</>
+          : <span>Move over the map for coordinates</span>}
       </div>
 
-      <div className="absolute bottom-4 left-4 z-[1000] pointer-events-none hud-telemetry bg-black/85 border border-slate-900 px-3 py-2 rounded-xl text-[8px] font-bold text-slate-500 uppercase tracking-widest leading-relaxed">
-        <div className="flex justify-between gap-4"><span>TARGET MATRIX:</span> <span className="text-white">NCR-HARYANA-UP</span></div>
-        <div className="flex justify-between gap-4"><span>PRECISION:</span> <span className="text-[#86FFD3]">±1.2 METERS</span></div>
+      <div className="lv-map-legend lv-mono" aria-hidden="true">
+        <div><i className="k-pipe" />Pipeline</div>
+        {showBufferZones && <div><i className="k-band" />500 m band</div>}
+        {requests?.length > 0 && <div><i className="k-permit" />Permit</div>}
+        {patrolTracks?.length > 0 && <div><i className="k-patrol" />Patrol</div>}
+        {detectionCount > 0 && <div><i className="k-detect" />Detection</div>}
       </div>
 
-      <div className="absolute bottom-4 right-4 z-[1000] pointer-events-none hud-telemetry bg-black/85 border border-slate-900 px-3 py-2 rounded-xl text-[8px] font-bold text-slate-500 uppercase tracking-widest leading-relaxed">
-        <div className="flex justify-between gap-4"><span>ACTIVE PATROLS:</span> <span className="text-[#7CEEFF]">02 ONLINE</span></div>
-        <div className="flex justify-between gap-4"><span>TELEMETRY BEATS:</span> <span className="text-white">5.0Hz</span></div>
-      </div>
+      {showImageryScan && <div className="satellite-scanline" />}
 
-      {/* Decorative corner brackets (Polaris UI HUD markers) */}
-      <div className="absolute top-2 left-2 z-[1000] pointer-events-none w-4 h-4 border-t border-l border-[#7CEEFF]/30"></div>
-      <div className="absolute top-2 right-2 z-[1000] pointer-events-none w-4 h-4 border-t border-r border-[#7CEEFF]/30"></div>
-      <div className="absolute bottom-2 left-2 z-[1000] pointer-events-none w-4 h-4 border-b border-l border-[#7CEEFF]/30"></div>
-      <div className="absolute bottom-2 right-2 z-[1000] pointer-events-none w-4 h-4 border-b border-r border-[#7CEEFF]/30"></div>
+      <MapContainer center={center} zoom={5} zoomControl className="h-full w-full">
+        <FlyIn to={center} zoom={7} />
+        <CursorTracker onMove={onCursor} />
 
-      {/* AI scanline sweep animation */}
-      {showImageryScan && <div className="satellite-scanline"></div>}
-
-
-      <MapContainer center={center} zoom={7} className="h-full w-full">
-        {/* Dynamic Map Tiles switcher */}
         <TileLayer
-          key={`${mapStyle}-${isLightTheme}`}
-          url={
-            mapStyle === 'satellite' 
-              ? "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" 
-              : isLightTheme
-                ? "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-                : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          }
-          attribution={
-            mapStyle === 'satellite' 
-              ? '&copy; Google Maps' 
-              : isLightTheme
-                ? '&copy; <a href="https://carto.com/">CARTO</a>'
-                : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          }
+          key={mapStyle}
+          url={mapStyle === 'satellite' ? 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}' : BASEMAP.url}
+          attribution={mapStyle === 'satellite' ? '&copy; Google' : BASEMAP.attribution}
         />
-        
-        {/* Render Pipeline Routes and Automated Buffer Zones */}
-        {pipelines && pipelines.features && pipelines.features.map((feature, idx) => {
-          const coords = feature.geometry.coordinates.map(c => [c[1], c[0]]); // Leaflet wants [lat, lng]
+
+        {/* Pipelines: buffer bands, the line itself, then a slow product-flow overlay. */}
+        {pipelines?.features?.map((feature, idx) => {
+          const coords = feature.geometry.coordinates.map((c) => [c[1], c[0]]);
           const type = feature.properties.type;
-          
+          const color = PIPE_COLOR[type] || '#f37021';
           return (
             <React.Fragment key={`pipe-${feature.properties.id || idx}`}>
-              {/* Outer Alert Buffer (500m) */}
               {showBufferZones && (
-                <Polyline 
-                  positions={coords} 
-                  pathOptions={getPipelineStyle(type, 'warning-buffer')} 
-                />
+                <>
+                  <Polyline positions={coords} pathOptions={{ color: '#f37021', weight: 34, opacity: 0.05, lineJoin: 'round', lineCap: 'round', interactive: false }} />
+                  <Polyline positions={coords} pathOptions={{ color: '#e5484d', weight: 14, opacity: 0.09, lineJoin: 'round', lineCap: 'round', interactive: false }} />
+                </>
               )}
-              
-              {/* Core Danger Buffer (100m) */}
-              {showBufferZones && (
-                <Polyline 
-                  positions={coords} 
-                  pathOptions={getPipelineStyle(type, 'danger-buffer')} 
-                />
-              )}
-
-              {/* Core Pipeline Line */}
-              <GeoJSON 
-                data={feature} 
-                style={() => getPipelineStyle(type, 'core')}
+              <GeoJSON
+                data={feature}
+                style={() => ({ color, weight: 2.5, opacity: 1, lineJoin: 'round', lineCap: 'round' })}
                 onEachFeature={(feat, layer) => {
+                  drawOnAdd(layer);
                   layer.bindPopup(`
-                    <div class="p-2 min-w-[150px] hud-telemetry">
-                      <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">IOCL Core Asset</div>
-                      <div class="text-xs font-black text-[#7CEEFF] uppercase tracking-tight">${feat.properties.name}</div>
-                      <div class="mt-2 flex items-center bg-[#111917]/80 p-1.5 rounded border border-emerald-500/20">
-                        <span class="w-2 h-2 rounded-full mr-2 animate-pulse" style="background-color: ${getPipelineStyle(type, 'core').color}"></span>
-                        <span class="text-[9px] font-black text-[#86FFD3] uppercase tracking-widest">${(type || '').toUpperCase()} TRANSMISSION</span>
+                    <div class="lv-pop">
+                      <div>
+                        <span class="lv-pop-kicker lv-mono">IOCL pipeline</span>
+                        <h3>${feat.properties.name}</h3>
                       </div>
+                      <dl class="lv-mono">
+                        <dt>Product</dt><dd>${feat.properties.type || 'n/a'}</dd>
+                        <dt>Buffer</dt><dd>500 m / 1 km</dd>
+                      </dl>
                     </div>
                   `);
                 }}
               />
+              {!reducedMotion() && (
+                <Polyline positions={coords} pathOptions={{ color: '#ffffff', weight: 2, opacity: 0.55, lineCap: 'round', className: 'lv-flow', interactive: false }} />
+              )}
             </React.Fragment>
           );
         })}
 
-        {/* Render Active Excavation Requests */}
-        {requests && requests.map(req => (
+        {/* Excavation permits: a dashed safety circle and a risk-coloured marker. Pending ones pulse. */}
+        {requests?.map((req, i) => (
           <React.Fragment key={`req-${req.id}`}>
-            {/* Visual safety zones around digging points */}
             {req.status !== 'closed' && (
-              <Circle 
+              <Circle
                 center={[req.lat, req.lng]}
                 radius={200}
-                pathOptions={{ 
-                  fillColor: req.risk_level === 'high' ? '#ef4444' : '#f59e0b',
-                  color: req.risk_level === 'high' ? '#ef4444' : '#f59e0b',
+                pathOptions={{
+                  color: req.risk_level === 'high' ? '#e5484d' : req.risk_level === 'medium' ? '#e8a23a' : '#4fb286',
                   weight: 1,
-                  fillOpacity: 0.12,
-                  dashArray: '4, 6'
+                  fillOpacity: 0.08,
+                  dashArray: '3 5',
                 }}
               />
             )}
-            
-            <Marker position={[req.lat, req.lng]} icon={req.status === 'verified' ? patrolIcon : defaultIcon}>
+            <Marker
+              position={[req.lat, req.lng]}
+              icon={dotIcon({
+                color: RISK_COLOR[req.risk_level] || 'var(--paper)',
+                solid: req.status === 'verified' || req.status === 'approved',
+                rings: req.status === 'pending' ? 1 : 0,
+                delay: 1.2 + i * 0.08,
+              })}
+            >
               <Popup>
-                <div className="p-3 min-w-[200px] hud-telemetry">
-                  <div className="flex justify-between items-start mb-3">
+                <div className="lv-pop">
+                  <div className="lv-pop-head">
                     <div>
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">PERMIT ID</p>
-                      <h3 className="font-black text-xs text-[#7CEEFF] uppercase tracking-tight">EXC-{1000 + req.id}</h3>
+                      <span className="lv-pop-kicker lv-mono">Permit</span>
+                      <h3>EXC-{1000 + req.id}</h3>
                     </div>
-                    <span className={`text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-wider ${
-                      req.risk_level === 'high' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 
-                      req.risk_level === 'medium' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 
-                      'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    }`}>
-                      {req.risk_level} RISK
-                    </span>
+                    <span className={riskTag(req.risk_level)}>{req.risk_level} risk</span>
                   </div>
-                  
-                  <div className="space-y-2 mb-3 bg-slate-950/80 p-2.5 rounded-lg border border-slate-900">
-                    <div>
-                      <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest block">CONTRACTOR</span>
-                      <span className="text-[10px] font-black text-white uppercase">{req.contractor_name}</span>
-                    </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 font-bold uppercase tracking-widest block">WORK PURPOSE</span>
-                      <span className="text-[10px] font-black text-slate-300 uppercase italic">"{req.purpose}"</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-slate-400 pt-2 border-t border-slate-900">
-                    <span>Status: <span className="text-[#86FFD3]">{(req.status || '').toUpperCase()}</span></span>
-                    <span>Proximity: <span className="text-[#F37021]">{Math.round(req.distance_to_pipeline || 0)}m</span></span>
-                  </div>
+                  <dl className="lv-mono">
+                    <dt>Contractor</dt><dd>{req.contractor_name}</dd>
+                    <dt>Purpose</dt><dd>{req.purpose}</dd>
+                    <dt>Status</dt><dd>{req.status}</dd>
+                    <dt>Distance</dt><dd>{Math.round(req.distance_to_pipeline || 0)} m</dd>
+                  </dl>
                 </div>
               </Popup>
             </Marker>
           </React.Fragment>
         ))}
 
-        {/* Render Satellite Imagery AI Anomalies */}
-        {imageryDetections && imageryDetections.map(anom => (
-          <Marker 
-            key={`anom-${anom.id}`} 
-            position={[anom.lat, anom.lng]} 
-            icon={anomalyIcon}
-          >
+        {/* Satellite detections: a red diamond with radar rings and its confidence. */}
+        {imageryDetections?.filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lng)).map((anom, i) => (
+          <Marker key={`anom-${anom.id}`} position={[anom.lat, anom.lng]} icon={detectionIcon(anom.confidence, 1.4 + i * 0.1)}>
             <Popup>
-              <div className="p-3 min-w-[200px] hud-telemetry">
-                <div className="flex justify-between items-start mb-2">
+              <div className="lv-pop">
+                <div className="lv-pop-head">
                   <div>
-                    <span className="text-[8px] font-black text-red-500 uppercase tracking-widest block">SATELLITE WARNING</span>
-                    <h3 className="font-black text-xs text-white uppercase tracking-tight">{anom.name}</h3>
+                    <span className="lv-pop-kicker lv-mono">Satellite detection</span>
+                    <h3>{anom.name}</h3>
                   </div>
-                  <span className="text-[9px] bg-red-950/80 border border-red-500/30 text-red-400 px-1.5 py-0.5 rounded font-black">
-                    {(anom.confidence * 100).toFixed(0)}% CONF
-                  </span>
+                  <span className={riskTag(anom.risk_level)}>{Math.round((anom.confidence || 0) * 100)}%</span>
                 </div>
-                <p className="text-[9px] text-slate-300 bg-red-950/20 border border-red-500/10 p-2 rounded mb-3">
-                  AI threat evaluation indicates excavation machinery within pipeline buffer zones.
-                </p>
-                <div className="flex justify-between items-center text-[9px] font-black text-slate-400 border-t border-slate-900 pt-2 uppercase">
-                  <span>Threat: <span className="text-red-500">CRITICAL</span></span>
-                  <span>Coords: <span className="text-slate-200">{anom.lat.toFixed(3)}, {anom.lng.toFixed(3)}</span></span>
-                </div>
+                <p>Possible excavation machinery inside the pipeline buffer.</p>
+                <dl className="lv-mono">
+                  <dt>Severity</dt><dd>{anom.risk_level || 'n/a'}</dd>
+                  <dt>Location</dt><dd>{anom.lat.toFixed(3)}, {anom.lng.toFixed(3)}</dd>
+                </dl>
               </div>
             </Popup>
           </Marker>
         ))}
 
-        {/* Render Patrol Telemetry Tracks */}
-        {patrolTracks && patrolTracks.map((track, idx) => (
-          <React.Fragment key={`track-${track.id || idx}`}>
-            {/* Draw a pulsing circle for the actual current/last position of the vehicle */}
-            {idx === 0 && (
-              <Circle 
-                center={[track.lat, track.lng]}
-                radius={300}
-                pathOptions={{ 
-                  fillColor: '#7CEEFF',
-                  color: '#7CEEFF',
-                  weight: 1,
-                  fillOpacity: 0.1,
-                  className: 'radar-glow-ring'
-                }}
-              />
-            )}
-            
-            <Marker 
-              position={[track.lat, track.lng]} 
-              icon={patrolIcon}
-            >
-              <Popup>
-                <div className="p-3 min-w-[180px] hud-telemetry">
-                  <div className="flex justify-between items-center mb-3">
-                    <span className="text-[9px] text-[#7CEEFF] font-black uppercase tracking-widest">Patrol Vehicle</span>
-                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${
-                      track.is_offline ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    }`}>
-                      {track.is_offline ? 'Offline Synced' : 'Online'}
-                    </span>
+        {/* Patrol: the travelled track as a moving dashed line, and the latest position with a halo. */}
+        {trackLine && (
+          <Polyline positions={trackLine} pathOptions={{ color: '#ededed', weight: 1.5, opacity: 0.7, className: 'lv-track', interactive: false }} />
+        )}
+        {patrolTracks?.map((track, idx) => (
+          <Marker
+            key={`track-${track.id || idx}`}
+            position={[track.lat, track.lng]}
+            icon={dotIcon({ color: 'var(--paper)', solid: true, rings: idx === patrolTracks.length - 1 ? 2 : 0, delay: 1.3 + idx * 0.06 })}
+          >
+            <Popup>
+              <div className="lv-pop">
+                <div className="lv-pop-head">
+                  <div>
+                    <span className="lv-pop-kicker lv-mono">Patrol position</span>
+                    <h3>{new Date(track.recorded_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</h3>
                   </div>
-                  <div className="space-y-1.5 text-[10px] font-bold text-slate-300 bg-slate-950/80 p-2.5 rounded-lg border border-slate-900">
-                    <div className="flex justify-between"><span>Battery:</span> <span className="text-white">{track.battery_level}%</span></div>
-                    <div className="flex justify-between"><span>Signal:</span> <span className="text-white uppercase">{track.signal_strength}</span></div>
-                    <div className="flex justify-between"><span>Last Sync:</span> <span className="text-white">{new Date(track.recorded_at).toLocaleTimeString()}</span></div>
-                  </div>
+                  <span className={riskTag(track.is_offline ? 'medium' : 'low')}>{track.is_offline ? 'Synced later' : 'Live'}</span>
                 </div>
-              </Popup>
-            </Marker>
-          </React.Fragment>
+                <dl className="lv-mono">
+                  <dt>Battery</dt><dd>{track.battery_level}%</dd>
+                  <dt>Signal</dt><dd>{track.signal_strength}</dd>
+                </dl>
+              </div>
+            </Popup>
+          </Marker>
         ))}
 
-        {/* Selection Marker for New Requests */}
         <LocationMarker position={selectedLocation} setPosition={onLocationSelect} />
-
-        {/* Pan Controller */}
         <ChangeMapCenter center={mapCenter} />
 
-        {/* Render Selected CGD GA Sonar Indicator */}
+        {/* Selected city gas distribution area. */}
         {selectedGA && (
           <>
-            <Circle 
-              center={[selectedGA.lat, selectedGA.lng]}
-              radius={8000}
-              pathOptions={{
-                fillColor: '#86FFD3',
-                color: '#86FFD3',
-                weight: 1.5,
-                fillOpacity: 0.05,
-                className: 'sonar-ping-ring'
-              }}
-            />
-            <Circle 
-              center={[selectedGA.lat, selectedGA.lng]}
-              radius={4000}
-              pathOptions={{
-                fillColor: '#86FFD3',
-                color: '#86FFD3',
-                weight: 2,
-                fillOpacity: 0.1,
-                className: 'radar-glow-ring'
-              }}
-            />
-            <Marker 
-              position={[selectedGA.lat, selectedGA.lng]}
-              icon={L.divIcon({
-                className: 'custom-hud-marker',
-                html: `
-                  <div class="relative flex items-center justify-center w-8 h-8">
-                    <div class="absolute w-3.5 h-3.5 rounded-full" style="background-color: #86FFD3; box-shadow: 0 0 12px #86FFD3;"></div>
-                    <div class="absolute w-7 h-7 rounded-full border border-dashed animate-spin" style="border-color: #86FFD390; animation-duration: 4s;"></div>
-                  </div>
-                `,
-                iconSize: [32, 32],
-                iconAnchor: [16, 16]
-              })}
-            >
+            <Circle center={[selectedGA.lat, selectedGA.lng]} radius={8000} pathOptions={{ color: '#ededed', weight: 1, fillOpacity: 0.03, dashArray: '3 6', className: 'lv-ga-ring' }} />
+            <Marker position={[selectedGA.lat, selectedGA.lng]} icon={dotIcon({ color: 'var(--paper)', solid: true, rings: 2 })}>
               <Popup>
-                <div className="p-3 min-w-[200px] hud-telemetry">
-                  <span className="text-[8px] font-black text-[#86FFD3] uppercase tracking-widest block">CGD GEOGRAPHICAL AREA</span>
-                  <h3 className="font-black text-xs text-white uppercase tracking-tight mb-2">{selectedGA.ga_name}</h3>
-                  <div className="space-y-1.5 text-[9px] font-bold text-slate-300 bg-slate-950/80 p-2 rounded border border-slate-900">
-                    <div><span className="text-slate-500">DISTRICT:</span> <span className="text-white uppercase">{selectedGA.district_covered}</span></div>
-                    <div><span className="text-slate-500">ENTITY:</span> <span className="text-[#7CEEFF] uppercase">{selectedGA.authorized_entity}</span></div>
-                    <div><span className="text-slate-500">TARGET DATE:</span> <span className="text-white">{selectedGA.date_target_completion}</span></div>
+                <div className="lv-pop">
+                  <div>
+                    <span className="lv-pop-kicker lv-mono">City gas distribution area</span>
+                    <h3>{selectedGA.ga_name}</h3>
                   </div>
+                  <dl className="lv-mono">
+                    <dt>District</dt><dd>{selectedGA.district_covered}</dd>
+                    <dt>Operator</dt><dd>{selectedGA.authorized_entity}</dd>
+                    <dt>Target date</dt><dd>{selectedGA.date_target_completion}</dd>
+                  </dl>
                 </div>
               </Popup>
             </Marker>

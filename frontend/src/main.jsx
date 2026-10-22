@@ -61,6 +61,14 @@ try {
   // ignore if localStorage isn't available in some environments
 }
 
+// Cache the app shell so the dashboards open without a connection (production builds only,
+// so the dev server's hot reload is never served from cache).
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('Service worker not registered', err));
+  });
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <ErrorBoundary>
     <App />

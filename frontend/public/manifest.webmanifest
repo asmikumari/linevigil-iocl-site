@@ -1,0 +1,10 @@
+{
+  "name": "LineVigil",
+  "short_name": "LineVigil",
+  "description": "Pipeline right-of-way protection: excavation permits, proximity risk checks and patrol field verification.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0d26",
+  "theme_color": "#0b0d26",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

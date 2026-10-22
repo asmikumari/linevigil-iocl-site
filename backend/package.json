@@ -1,15 +1,25 @@
 {
-  "name": "backend",
+  "name": "linevigil-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "LineVigil API: excavation permits, pipeline proximity checks, patrol dispatch and offline-safe telemetry sync",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "init-db": "node init_db.js"
+    "test": "node --test \"test/*.test.js\"",
+    "seed": "node init_mongodb.js"
   },
-  "keywords": [],
-  "author": "",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "gis",
+    "geospatial",
+    "pipeline-safety",
+    "express",
+    "mongodb"
+  ],
+  "author": "Asmi Kumari",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
@@ -19,7 +29,6 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.3.0",
-    "pg": "^8.21.0",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
