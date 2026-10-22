@@ -1,16 +1,13 @@
 const express = require('express');
-const router = express.Router();
 const db = require('../db');
-const authenticateToken = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
+const { asyncHandler } = require('../lib/http');
 
-// Get all CGD Geographical Area Targets & Achievements
-router.get('/telemetry', authenticateToken, async (req, res) => {
-  try {
-    const telemetry = await db.findCGDTelemetry();
-    res.json(telemetry);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+const router = express.Router();
+
+// City gas distribution area targets and progress (admin analytics).
+router.get('/telemetry', authenticateToken, requireRole('admin'), asyncHandler(async (req, res) => {
+  res.json(await db.findCGDTelemetry());
+}));
 
 module.exports = router;

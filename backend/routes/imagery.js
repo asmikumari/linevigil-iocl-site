@@ -1,81 +1,75 @@
 const express = require('express');
-const router = express.Router();
 const db = require('../db');
-const authenticateToken = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
+const { asyncHandler } = require('../lib/http');
+const { distanceToPolyline, EARTH_RADIUS_M } = require('../lib/geo');
+const { classifyRisk } = require('../lib/risk');
 
-// Get All Detections
-router.get('/detections', authenticateToken, async (req, res) => {
-  try {
-    const detections = await db.findImageryDetections();
-    res.json(detections);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+const router = express.Router();
+router.use(authenticateToken);
 
-// Trigger Satellite Imagery Scan Simulation
-router.post('/scan', authenticateToken, async (req, res) => {
-  const { minLng, minLat, maxLng, maxLat } = req.body;
-  
-  // Simulated Scan Bounds (fallback if not provided)
-  const bounds = {
-    minLng: minLng || 73.0,
-    minLat: minLat || 21.0,
-    maxLng: maxLng || 88.0,
-    maxLat: maxLat || 31.0
+const OBJECT_TYPES = ['Hydraulic excavator', 'Backhoe loader', 'Fresh trench', 'Soil disturbance', 'Heavy truck'];
+
+// Every detection on record (satellite simulations and patrol reports).
+router.get('/detections', asyncHandler(async (req, res) => {
+  res.json(await db.findImageryDetections());
+}));
+
+/*
+ * Simulated satellite sweep (admin).
+ * There is no imagery provider behind this demo, so the sweep places one plausible detection near a
+ * pipeline corridor: a random point along a route, offset sideways by up to 1.5 km. Its risk comes from
+ * the measured distance, using the same rule as permits, and the response is marked simulated.
+ */
+router.post('/scan', requireRole('admin'), asyncHandler(async (req, res) => {
+  const routes = await db.findPipelineRoutes();
+  const route = routes[Math.floor(Math.random() * routes.length)];
+  const line = JSON.parse(route.geojson).coordinates;
+
+  const i = Math.floor(Math.random() * (line.length - 1));
+  const t = Math.random();
+  const [aLng, aLat] = line[i];
+  const [bLng, bLat] = line[i + 1];
+  const baseLng = aLng + t * (bLng - aLng);
+  const baseLat = aLat + t * (bLat - aLat);
+
+  // Offset perpendicular to the segment by 0-1500 m.
+  const offset = (Math.random() * 2 - 1) * 1500;
+  const mPerDegLat = (Math.PI / 180) * EARTH_RADIUS_M;
+  const mPerDegLng = mPerDegLat * Math.cos((baseLat * Math.PI) / 180);
+  const dx = (bLng - aLng) * mPerDegLng;
+  const dy = (bLat - aLat) * mPerDegLat;
+  const len = Math.hypot(dx, dy) || 1;
+  const lng = baseLng + ((-dy / len) * offset) / mPerDegLng;
+  const lat = baseLat + ((dx / len) * offset) / mPerDegLat;
+
+  const distance = distanceToPolyline(lng, lat, line).metres;
+  const detection = await db.createImageryDetection({
+    name: OBJECT_TYPES[Math.floor(Math.random() * OBJECT_TYPES.length)],
+    confidence: Math.round((0.7 + Math.random() * 0.27) * 100) / 100,
+    risk_level: classifyRisk(distance),
+    distance_to_pipeline: Math.round(distance),
+    source: 'simulated-satellite',
+    simulated: true,
+    location: { type: 'Point', coordinates: [lng, lat] },
+  });
+
+  const response = {
+    id: detection.id,
+    name: detection.name,
+    confidence: detection.confidence,
+    risk_level: detection.risk_level,
+    distance_to_pipeline: detection.distance_to_pipeline,
+    pipeline: route.name,
+    source: 'simulated-satellite',
+    simulated: true,
+    lng,
+    lat,
+    detected_at: detection.detected_at,
   };
 
-  // Generate a random mock anomaly in this bounding box
-  const lng = bounds.minLng + Math.random() * (bounds.maxLng - bounds.minLng);
-  const lat = bounds.minLat + Math.random() * (bounds.maxLat - bounds.minLat);
-  
-  const anomalyNames = [
-    'CAT-345 Hydraulic Excavator',
-    'JCB 3DX Eco Backhoe Loader',
-    'Unauthorised Soil Excavation Area',
-    'Fresh Trench Anomaly',
-    'Industrial Truck Intrusion',
-    'Sewer Pipeline Encroachment'
-  ];
-  
-  const selectedName = anomalyNames[Math.floor(Math.random() * anomalyNames.length)];
-  const confidence = parseFloat((0.75 + Math.random() * 0.23).toFixed(2));
-  const riskLevel = confidence > 0.9 ? 'high' : (confidence > 0.82 ? 'medium' : 'low');
-
-  try {
-    const newAnomaly = await db.createImageryDetection({
-      name: selectedName,
-      confidence,
-      risk_level: riskLevel,
-      location: {
-        type: 'Point',
-        coordinates: [lng, lat]
-      }
-    });
-
-    // Format coordinates as flat properties for the frontend
-    const anomalyResponse = {
-      id: newAnomaly.id,
-      name: newAnomaly.name,
-      confidence: newAnomaly.confidence,
-      risk_level: newAnomaly.risk_level,
-      lng: newAnomaly.location ? newAnomaly.location.coordinates[0] : lng,
-      lat: newAnomaly.location ? newAnomaly.location.coordinates[1] : lat,
-      detected_at: newAnomaly.detected_at
-    };
-
-    // Broadcast event via Socket.IO if available
-    if (req.app.get('io')) {
-      req.app.get('io').emit('new-anomalies', [anomalyResponse]);
-    }
-
-    res.status(201).json({
-      message: 'Satellite scan completed successfully',
-      detections: [anomalyResponse]
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+  if (req.app.get('io')) req.app.get('io').emit('new-anomalies', [response]);
+  res.status(201).json({ message: 'Simulated satellite sweep complete', simulated: true, detections: [response] });
+}));
 
 module.exports = router;

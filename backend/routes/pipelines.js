@@ -1,29 +1,20 @@
 const express = require('express');
-const router = express.Router();
 const db = require('../db');
+const { asyncHandler } = require('../lib/http');
 
-// Get all pipeline routes as GeoJSON
-router.get('/', async (req, res) => {
-  try {
-    const pipelines = await db.findPipelineRoutes();
-    
-    const features = pipelines.map(row => ({
+const router = express.Router();
+
+// All pipeline routes as a GeoJSON FeatureCollection. Public: the routes are shown before sign-in.
+router.get('/', asyncHandler(async (req, res) => {
+  const pipelines = await db.findPipelineRoutes();
+  res.json({
+    type: 'FeatureCollection',
+    features: pipelines.map((row) => ({
       type: 'Feature',
-      properties: {
-        id: row.id,
-        name: row.name,
-        type: row.type
-      },
-      geometry: JSON.parse(row.geojson)
-    }));
-
-    res.json({
-      type: 'FeatureCollection',
-      features: features
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+      properties: { id: row.id, name: row.name, type: row.type },
+      geometry: JSON.parse(row.geojson),
+    })),
+  });
+}));
 
 module.exports = router;

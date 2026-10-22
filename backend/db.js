@@ -1,11 +1,14 @@
 const { MongoClient } = require('mongodb');
 const bcrypt = require('bcryptjs');
-require('dotenv').config();
+const { haversine: calculateHaversineDistance, distanceToPolyline } = require('./lib/geo');
+const sample = require('./lib/sampleData');
+require('dotenv').config({ quiet: true });
 
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/linevigil';
-let dbClient = null;
+// LINEVIGIL_DB=memory skips MongoDB entirely (used by the tests and offline demos).
+const forceMemory = process.env.LINEVIGIL_DB === 'memory';
 let dbInstance = null;
-let useMock = false;
+let useMock = true; // stays true until MongoDB actually connects
 
 // Simulated DB State (Reset-on-restart)
 const mockDb = {
@@ -15,23 +18,10 @@ const mockDb = {
     { id: 3, name: 'Contractor User', email: 'contractor@linevigil.com', password: bcrypt.hashSync('password123', 10), role: 'contractor' },
     { id: 4, name: 'Patrol Officer 2', email: 'patrol2@linevigil.com', password: bcrypt.hashSync('password123', 10), role: 'patrol' }
   ],
-  pipelines: [
-    { id: 1, name: 'IOCL-PL-01 (Mathura-Jalandhar)', type: 'product', geom: [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50], [76.50, 31.00]] },
-    { id: 2, name: 'IOCL-PL-02 (Koyali-Sanganer)', type: 'crude', geom: [[73.18, 22.30], [73.50, 23.50], [74.50, 25.50], [75.80, 26.90]] },
-    { id: 3, name: 'IOCL-PL-03 (Paradip-Haldia)', type: 'gas', geom: [[86.67, 20.27], [87.50, 21.50], [88.20, 22.50]] }
-  ],
-  excavation_requests: [
-    { id: 1, contractor_id: 3, contractor_name: 'ABC Infra', company_name: 'Buildwell Ltd.', work_date: '2026-06-12', purpose: 'Road Construction', status: 'pending', risk_level: 'high', distance_to_pipeline: 120.5, lat: 28.58, lng: 77.12, assigned_to: null, checked_in: false, check_in_time: null, created_at: new Date() },
-    { id: 2, contractor_id: 3, contractor_name: 'KMC Projects', company_name: 'KMC Infra', work_date: '2026-06-11', purpose: 'Sewer Line', status: 'assigned', risk_level: 'medium', distance_to_pipeline: 650.2, lat: 23.10, lng: 73.50, assigned_to: 2, checked_in: false, check_in_time: null, created_at: new Date() },
-    { id: 3, contractor_id: 3, contractor_name: 'KMC Projects', company_name: 'Delhi Roads', work_date: '2026-06-14', purpose: 'Water Pipeline', status: 'assigned', risk_level: 'high', distance_to_pipeline: 250.0, lat: 28.60, lng: 77.20, assigned_to: 4, checked_in: false, check_in_time: null, created_at: new Date() }
-  ],
+  pipelines: sample.PIPELINES.map(({ coordinates, ...p }) => ({ ...p, geom: coordinates })),
+  excavation_requests: sample.scoredPermits(),
   verification_logs: [],
-  imagery_detections: [
-    { id: 1, name: 'CAT-320 Heavy Excavator', confidence: 0.94, risk_level: 'high', lat: 28.62, lng: 77.15, detected_at: new Date() },
-    { id: 2, name: 'Soil Displacement Anomaly', confidence: 0.81, risk_level: 'medium', lat: 23.25, lng: 73.45, detected_at: new Date() },
-    { id: 3, name: 'Unauthorized Backhoe Loader', confidence: 0.88, risk_level: 'high', lat: 28.95, lng: 77.40, detected_at: new Date() },
-    { id: 4, name: 'Deep Trench Anomaly', confidence: 0.75, risk_level: 'low', lat: 21.15, lng: 87.20, detected_at: new Date() }
-  ],
+  imagery_detections: sample.scoredDetections(),
   patrol_tracks: [
     { id: 1, patrol_id: 2, lat: 27.49, lng: 77.67, is_offline: false, battery_level: 95, signal_strength: 'excellent', recorded_at: new Date() },
     { id: 2, patrol_id: 2, lat: 28.00, lng: 77.58, is_offline: false, battery_level: 92, signal_strength: 'good', recorded_at: new Date() },
@@ -102,63 +92,42 @@ const mockDb = {
   }))
 };
 
-// Math Helpers for Mock Proximity
-function pointToSegmentDistance(px, py, ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  if (dx === 0 && dy === 0) {
-    return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2);
-  }
-  const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
-  const clampedT = Math.max(0, Math.min(1, t));
-  const nearestX = ax + clampedT * dx;
-  const nearestY = ay + clampedT * dy;
-  return Math.sqrt((px - nearestX) ** 2 + (py - nearestY) ** 2);
+// Adds the summary fields the admin table shows. Pipeline targets are PNGRB minimum work programme
+// figures in inch-km; an area is "behind" when its laid pipeline is short of that target.
+function withCgdSummary(r) {
+  const target = Number(r.pipeline_mwp_target) || 0;
+  const achieved = Number(r.pipeline_achievement) || 0;
+  return {
+    ...r,
+    id: r.sl_no,
+    name: r.ga_name,
+    operator: r.authorized_entity,
+    target_km: target,
+    achieved_km: achieved,
+    status: achieved >= target ? 'normal' : 'behind',
+  };
 }
 
-function getDistanceToPipeline(lng, lat, pipelineCoords) {
-  let minDistance = Infinity;
-  for (let i = 0; i < pipelineCoords.length - 1; i++) {
-    const d = pointToSegmentDistance(lng, lat, pipelineCoords[i][0], pipelineCoords[i][1], pipelineCoords[i+1][0], pipelineCoords[i+1][1]);
-    if (d < minDistance) minDistance = d;
-  }
-  return minDistance * 111320; // 1 degree ≈ 111.32km
-}
+// Distance from a point to a mock pipeline, in metres (geodesic, see lib/geo.js).
+const getDistanceToPipeline = (lng, lat, coords) => distanceToPolyline(lng, lat, coords).metres;
 
-function calculateHaversineDistance(lon1, lat1, lon2, lat2) {
-  const R = 6371e3; // metres
-  const phi1 = lat1 * Math.PI / 180;
-  const phi2 = lat2 * Math.PI / 180;
-  const deltaPhi = (lat2 - lat1) * Math.PI / 180;
-  const deltaLambda = (lon2 - lon1) * Math.PI / 180;
-
-  const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-            Math.cos(phi1) * Math.cos(phi2) *
-            Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-  return R * c; // distance in meters
-}
-
-// Connect to MongoDB with timeout
-const client = new MongoClient(mongoUri, {
-  serverSelectionTimeoutMS: 2000,
-  connectTimeoutMS: 2000
-});
-
+// Connect to MongoDB, falling back to the in-memory demo data if it is unreachable.
+// `ready` resolves once the mode is decided, so requests never run against a half-initialised layer.
 async function connectDb() {
+  if (forceMemory) return;
+  const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 2000, connectTimeoutMS: 2000 });
   try {
     await client.connect();
     dbInstance = client.db();
-    console.log('✅ Connected to MongoDB Database successfully');
     useMock = false;
+    console.log('Connected to MongoDB');
   } catch (err) {
-    console.warn('⚠️ MongoDB connection failed. Switching to IN-MEMORY MOCK DATABASE MODE.');
     useMock = true;
+    console.warn(`MongoDB unavailable (${err.message}); using the in-memory demo dataset.`);
   }
 }
 
-connectDb();
+const ready = connectDb();
 
 // Expose collection getter
 function getCollection(name) {
@@ -168,6 +137,7 @@ function getCollection(name) {
 
 // Unified CRUD operations interface
 module.exports = {
+  ready,
   isMock: () => useMock,
   mockDb,
   getDb: () => dbInstance,
@@ -175,10 +145,11 @@ module.exports = {
 
   // Users
   findUserByEmail: async (email) => {
+    const normalized = String(email || '').trim().toLowerCase();
     if (useMock) {
-      return mockDb.users.find(u => u.email === email);
+      return mockDb.users.find(u => u.email === normalized);
     }
-    return await dbInstance.collection('users').findOne({ email });
+    return await dbInstance.collection('users').findOne({ email: normalized });
   },
 
   createUser: async (userData) => {
@@ -478,18 +449,31 @@ module.exports = {
     }));
   },
 
+  // Returns { track, duplicate }. A point that carries a client_id already stored for the same patrol
+  // is not stored again, so an offline queue can safely be re-sent after a timeout.
   createPatrolTrack: async (trackData) => {
     if (useMock) {
+      if (trackData.client_id) {
+        const existing = mockDb.patrol_tracks.find(t => t.patrol_id === trackData.patrol_id && t.client_id === trackData.client_id);
+        if (existing) return { track: existing, duplicate: true };
+      }
       const newId = mockDb.patrol_tracks.length + 1;
+      const [lng, lat] = trackData.location ? trackData.location.coordinates : [trackData.lng, trackData.lat];
       const newTrack = {
         id: newId,
         ...trackData,
+        lng,
+        lat,
         recorded_at: trackData.recorded_at ? new Date(trackData.recorded_at) : new Date()
       };
       mockDb.patrol_tracks.push(newTrack);
-      return newTrack;
+      return { track: newTrack, duplicate: false };
     }
     const collection = dbInstance.collection('patrol_tracks');
+    if (trackData.client_id) {
+      const existing = await collection.findOne({ patrol_id: trackData.patrol_id, client_id: trackData.client_id });
+      if (existing) return { track: existing, duplicate: true };
+    }
     const maxTrack = await collection.find().sort({ id: -1 }).limit(1).toArray();
     const newId = maxTrack.length > 0 ? maxTrack[0].id + 1 : 1;
     const newTrack = {
@@ -498,16 +482,16 @@ module.exports = {
       recorded_at: trackData.recorded_at ? new Date(trackData.recorded_at) : new Date()
     };
     await collection.insertOne(newTrack);
-    return newTrack;
+    return { track: newTrack, duplicate: false };
   },
 
   // CGD Telemetry
   findCGDTelemetry: async () => {
     if (useMock) {
-      return mockDb.cgd_ga_telemetry;
+      return mockDb.cgd_ga_telemetry.map(withCgdSummary);
     }
     const results = await dbInstance.collection('cgd_ga_telemetry').find().sort({ sl_no: 1 }).toArray();
-    return results.map(r => ({
+    return results.map(r => withCgdSummary({
       ...r,
       lng: r.location ? r.location.coordinates[0] : null,
       lat: r.location ? r.location.coordinates[1] : null

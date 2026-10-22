@@ -1,112 +1,84 @@
 const express = require('express');
-const router = express.Router();
 const db = require('../db');
-const authenticateToken = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
+const { asyncHandler, badRequest } = require('../lib/http');
+const { parseLngLat } = require('../lib/geo');
+const { classifyRisk, COLLISION_STATUS, NO_PIPELINE_DISTANCE_M, RISK_THRESHOLDS_M } = require('../lib/risk');
 
-// Add Excavation Request
-router.post('/', authenticateToken, async (req, res) => {
-  const { contractorName, companyName, workDate, purpose, lng, lat } = req.body;
-  const contractorId = req.user.id;
+const router = express.Router();
+router.use(authenticateToken);
 
-  try {
-    // 1. Calculate risk using GIS helper
-    const nearest = await db.findNearestPipeline(lng, lat);
-    
-    let distance = 5000; // default safe distance
-    let riskLevel = 'low';
+// Distance from a point to the nearest pipeline and the resulting risk, the one calculation every
+// permit and collision check goes through.
+async function assess(lng, lat) {
+  const nearest = await db.findNearestPipeline(lng, lat);
+  const distance = nearest ? nearest.distance_meters : NO_PIPELINE_DISTANCE_M;
+  return { nearest, distance, riskLevel: classifyRisk(distance) };
+}
 
-    if (nearest) {
-      distance = nearest.distance_meters;
-      if (distance < 500) riskLevel = 'high';
-      else if (distance < 1000) riskLevel = 'medium';
-    }
+function readCoords(body) {
+  const coords = parseLngLat(body?.lng, body?.lat);
+  if (!coords) throw badRequest('Choose a valid location on the map', { lng: 'Longitude -180 to 180', lat: 'Latitude -90 to 90' });
+  return coords;
+}
 
-    // 2. Insert request
-    const newRequest = await db.createExcavationRequest({
-      contractor_id: contractorId,
-      contractor_name: contractorName,
-      company_name: companyName,
-      work_date: workDate,
-      purpose,
-      distance_to_pipeline: distance,
-      risk_level: riskLevel,
-      location: {
-        type: 'Point',
-        coordinates: [parseFloat(lng), parseFloat(lat)]
-      }
-    });
+// File an excavation permit (contractors).
+router.post('/', requireRole('contractor', 'admin'), asyncHandler(async (req, res) => {
+  const { lng, lat } = readCoords(req.body);
+  const { contractorName, companyName, workDate, purpose } = req.body;
 
-    res.status(201).json(newRequest);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+  const errors = {};
+  if (typeof companyName !== 'string' || !companyName.trim()) errors.companyName = 'Enter the company name';
+  if (typeof workDate !== 'string' || Number.isNaN(Date.parse(workDate))) errors.workDate = 'Choose the work date';
+  if (typeof purpose !== 'string' || !purpose.trim()) errors.purpose = 'Choose the work purpose';
+  if (Object.keys(errors).length) throw badRequest('Check the highlighted fields', errors);
 
-// Check Collision and Buffer zones (Real-time HUD)
-router.post('/check-collision', authenticateToken, async (req, res) => {
-  const { lng, lat } = req.body;
-  if (!lng || !lat) {
-    return res.status(400).json({ error: 'Coordinates missing' });
-  }
+  const { distance, riskLevel } = await assess(lng, lat);
+  const request = await db.createExcavationRequest({
+    contractor_id: req.user.id,
+    contractor_name: (contractorName || req.user.name || '').toString().slice(0, 120),
+    company_name: companyName.trim().slice(0, 120),
+    work_date: workDate,
+    purpose: purpose.trim().slice(0, 120),
+    distance_to_pipeline: Math.round(distance * 10) / 10,
+    risk_level: riskLevel,
+    status: 'pending',
+    location: { type: 'Point', coordinates: [lng, lat] },
+    lng,
+    lat,
+  });
 
-  try {
-    let distance = 5000;
-    let pipelineName = 'None';
-    
-    // Find nearest pipeline route
-    const nearest = await db.findNearestPipeline(lng, lat);
-    if (nearest) {
-      distance = nearest.distance_meters;
-      pipelineName = nearest.name;
-    }
+  res.status(201).json(request);
+}));
 
-    // Find overlapping permits within 500m
-    const overlapping = await db.findOverlappingRequests(lng, lat, 500);
+// Live check while a contractor picks a site: same risk rule as filing, plus nearby permits.
+router.post('/check-collision', asyncHandler(async (req, res) => {
+  const { lng, lat } = readCoords(req.body);
+  const { nearest, distance, riskLevel } = await assess(lng, lat);
+  const overlapping = await db.findOverlappingRequests(lng, lat, RISK_THRESHOLDS_M.high);
 
-    let riskLevel = 'low';
-    let collisionStatus = 'safe';
+  res.json({
+    distanceToPipeline: Math.round(distance * 10) / 10,
+    pipelineName: nearest ? nearest.name : 'None',
+    riskLevel,
+    collisionStatus: COLLISION_STATUS[riskLevel],
+    thresholdsMetres: RISK_THRESHOLDS_M,
+    overlappingPermits: overlapping,
+  });
+}));
 
-    if (distance < 100) {
-      riskLevel = 'high';
-      collisionStatus = 'danger';
-    } else if (distance < 500) {
-      riskLevel = 'medium';
-      collisionStatus = 'warning';
-    }
+// All permits (admin and patrol). Contractors use /my.
+router.get('/', requireRole('admin', 'patrol'), asyncHandler(async (req, res) => {
+  const requests = await db.findExcavationRequests();
+  requests.sort((a, b) => b.id - a.id);
+  res.json(requests);
+}));
 
-    res.json({
-      distanceToPipeline: distance,
-      pipelineName,
-      riskLevel,
-      collisionStatus,
-      overlappingPermits: overlapping
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get All Requests (Admin)
-router.get('/', authenticateToken, async (req, res) => {
-  try {
-    const requests = await db.findExcavationRequests();
-    // Sort descending by id or created_at (mock fallback doesn't have MongoDB sort)
-    requests.sort((a, b) => b.id - a.id);
-    res.json(requests);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get User's Requests
-router.get('/my', authenticateToken, async (req, res) => {
-  try {
-    const requests = await db.findExcavationRequests({ contractor_id: req.user.id });
-    requests.sort((a, b) => b.id - a.id);
-    res.json(requests);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// The signed-in contractor's own permits.
+router.get('/my', asyncHandler(async (req, res) => {
+  const requests = await db.findExcavationRequests({ contractor_id: req.user.id });
+  requests.sort((a, b) => b.id - a.id);
+  res.json(requests);
+}));
 
 module.exports = router;
