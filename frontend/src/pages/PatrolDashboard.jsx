@@ -71,6 +71,10 @@ const PatrolDashboard = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [batteryLevel, setBatteryLevel] = useState(98);
   const [simCoords, setSimCoords] = useState({ lat: 28.50, lng: 77.50 });
+  // Latest fix from the device's GPS; null until one arrives or if the device has none.
+  const [gps, setGps] = useState(null);
+  const [gpsError, setGpsError] = useState('');
+  const gpsRef = useRef(null);
 
   // Message Interaction States
   const [chatContacts, setChatContacts] = useState([
@@ -165,16 +169,39 @@ const PatrolDashboard = () => {
     };
   }, []);
 
-  // Simulating GPS tracker ticks while offline
+  useEffect(() => {
+    if (!('geolocation' in navigator)) {
+      setGpsError('This device does not report a location');
+      return undefined;
+    }
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy, altitude, speed, heading } = pos.coords;
+        const fix = { lat: latitude, lng: longitude, accuracy, altitude, speed, heading, time: pos.timestamp };
+        gpsRef.current = fix;
+        setGps(fix);
+        setGpsError('');
+      },
+      (err) => setGpsError(err.code === err.PERMISSION_DENIED ? 'Location permission was denied' : 'Waiting for a GPS fix'),
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 }
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, []);
+
+  // Record a track point every 8 s while offline: the real GPS fix when there is one,
+  // otherwise a simulated walk so the demo still shows the offline queue.
   useEffect(() => {
     let intervalId;
     if (isOffline) {
       intervalId = setInterval(() => {
         setSimCoords(prev => {
-          const nextLat = prev.lat + (Math.random() - 0.5) * 0.02;
-          const nextLng = prev.lng + (Math.random() - 0.5) * 0.02;
+          const fix = gpsRef.current;
+          const nextLat = fix ? fix.lat : prev.lat + (Math.random() - 0.5) * 0.02;
+          const nextLng = fix ? fix.lng : prev.lng + (Math.random() - 0.5) * 0.02;
           
           const newTrackPoint = {
+            // Unique per point so the server can drop duplicates if this queue is sent twice.
+            client_id: window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
             lat: nextLat,
             lng: nextLng,
             is_offline: true,
@@ -209,24 +236,24 @@ const PatrolDashboard = () => {
       setTasks(taskRes.data);
       setMyVerifications(myVerifRes.data);
       setIsOffline(false);
+      try {
+        localStorage.setItem('patrol_last_sync', JSON.stringify({ pipelines: pipeRes.data, tasks: taskRes.data, verifications: myVerifRes.data, savedAt: Date.now() }));
+      } catch {
+        // Storage full or blocked: the app still works online.
+      }
     } catch (err) {
-      console.warn('Backend connection failed. Operating in standalone client-side Patrol GIS fallback mode.', err);
+      console.warn('API not reachable, using the last synced tasks', err);
       setIsOffline(true);
-      
-      setPipelines({
-        type: 'FeatureCollection',
-        features: [
-          { type: 'Feature', properties: { id: 1, name: 'IOCL-PL-01 (Mathura-Jalandhar)', type: 'product' }, geometry: { type: 'LineString', coordinates: [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50], [76.50, 31.00]] } }
-        ]
-      });
-
-      setTasks([
-        { id: 2, contractor_name: 'KMC Projects', company_name: 'KMC Infra', work_date: '2026-06-11', purpose: 'Sewer Line', status: 'assigned', risk_level: 'medium', distance_to_pipeline: 650.2, lat: 28.50, lng: 77.40 }
-      ]);
-
-      setMyVerifications([
-        { id: 1, request_id: 2, notes: 'Clear marker posts visible. Checked safety depth.', verified_at: new Date().toISOString(), photo_url: 'https://via.placeholder.com/300' }
-      ]);
+      try {
+        const cached = JSON.parse(localStorage.getItem('patrol_last_sync') || 'null');
+        if (cached) {
+          setPipelines(cached.pipelines);
+          setTasks(cached.tasks);
+          setMyVerifications(cached.verifications);
+        }
+      } catch {
+        // Corrupt cache: start empty rather than show wrong tasks.
+      }
     }
   };
 
@@ -510,8 +537,8 @@ const PatrolDashboard = () => {
                   <tr key={f.properties.id} className="hover:bg-white/5 transition">
                     <td className="px-4 py-4 font-black text-white">{f.properties.name}</td>
                     <td className="px-4 py-4 uppercase text-[#7CEEFF]">{f.properties.type}</td>
-                    <td className="px-4 py-4">100 METERS</td>
                     <td className="px-4 py-4">500 METERS</td>
+                    <td className="px-4 py-4">1 KM</td>
                     <td className="px-4 py-4">
                       <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold uppercase tracking-wider text-[8px]">
                         Active Scanning
@@ -837,26 +864,25 @@ const PatrolDashboard = () => {
             </h2>
 
             <div className="space-y-4 text-[10px] text-slate-300 uppercase font-black tracking-widest">
-              <div className="p-3 bg-black/30 border border-slate-900 rounded-lg flex justify-between">
-                <span>SPEED:</span>
-                <span className="text-emerald-400">42 KM/H</span>
-              </div>
-              <div className="p-3 bg-black/30 border border-slate-900 rounded-lg flex justify-between">
-                <span>HEADING:</span>
-                <span className="text-white">NNE (32°)</span>
-              </div>
-              <div className="p-3 bg-black/30 border border-slate-900 rounded-lg flex justify-between">
-                <span>SATELLITES:</span>
-                <span className="text-[#7CEEFF]">8 GPS / 6 GLONASS</span>
-              </div>
-              <div className="p-3 bg-black/30 border border-slate-900 rounded-lg flex justify-between">
-                <span>GPS LOCK:</span>
-                <span className="text-emerald-400">3D HIGH PRECISION</span>
-              </div>
-              <div className="p-3 bg-black/30 border border-slate-900 rounded-lg flex justify-between">
-                <span>ALTITUDE:</span>
-                <span className="text-white">218 METERS</span>
-              </div>
+              {gps ? (
+                [
+                  ['Position', `${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}`],
+                  ['Accuracy', `± ${Math.round(gps.accuracy)} m`],
+                  ['Speed', Number.isFinite(gps.speed) ? `${Math.round(gps.speed * 3.6)} km/h` : 'Not reported'],
+                  ['Heading', Number.isFinite(gps.heading) ? `${Math.round(gps.heading)}°` : 'Not reported'],
+                  ['Altitude', Number.isFinite(gps.altitude) ? `${Math.round(gps.altitude)} m` : 'Not reported'],
+                  ['Last fix', new Date(gps.time).toLocaleTimeString()],
+                ].map(([label, value]) => (
+                  <div key={label} className="p-3 bg-black/30 border border-slate-900 rounded-lg flex justify-between">
+                    <span>{label}</span>
+                    <span className="text-white normal-case">{value}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="p-3 bg-black/30 border border-slate-900 rounded-lg normal-case font-bold tracking-normal text-slate-400">
+                  No GPS fix. {gpsError || 'Waiting for the device location'}.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -1107,7 +1133,7 @@ const PatrolDashboard = () => {
                   <div className="flex justify-between items-center text-[9px] text-slate-500 font-black uppercase tracking-wider mb-2">
                     <span>GPS Signal State</span>
                     <span className={isOffline ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
-                      {isOffline ? "LOCAL CACHING" : "LIVE GNOSS LINK"}
+                      {isOffline ? "LOCAL CACHING" : "LIVE GPS"}
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-[10px] text-white font-bold mb-3 uppercase tracking-wider">

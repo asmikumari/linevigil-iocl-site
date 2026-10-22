@@ -162,7 +162,7 @@ const ContractorMessages = () => {
             </div>
             <div className="text-right text-[8px] hud-telemetry font-bold text-slate-500 uppercase tracking-widest border border-slate-800 bg-black/40 p-2 rounded-lg flex items-center space-x-1.5">
               <Terminal className="h-3 w-3 text-[#7CEEFF]" />
-              <span>LOG ENCRYPTED: SHA256/AES</span>
+              <span>Messages are relayed live, not stored</span>
             </div>
           </div>
 

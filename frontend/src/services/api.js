@@ -9,7 +9,6 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
-  console.log('Sending request with token:', token ? 'Exists' : 'Missing');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -19,11 +18,10 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 || error.response?.status === 403) {
-      console.error('Auth error detected, clearing storage');
+    // 401 means the session is gone; 403 only means this role can't do that, so stay signed in.
+    if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      // window.location.href = '/login'; // Optional: auto redirect
     }
     return Promise.reject(error);
   }

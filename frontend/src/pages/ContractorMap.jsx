@@ -24,6 +24,7 @@ const ContractorMap = () => {
   // Proximity Radar State
   const [collisionInfo, setCollisionInfo] = useState(null);
   const [checkingCollision, setCheckingCollision] = useState(false);
+  const [checkError, setCheckError] = useState('');
 
   useEffect(() => {
     loadData();
@@ -47,21 +48,8 @@ const ContractorMap = () => {
       setPipelines(pipeRes.data);
       setMyRequests(reqRes.data);
     } catch (err) {
-      console.warn('Backend link down. Operating in standalone client-side Contractor Map fallback mode.', err);
-      
-      setPipelines({
-        type: 'FeatureCollection',
-        features: [
-          { type: 'Feature', properties: { id: 1, name: 'IOCL-PL-01 (Mathura-Jalandhar)', type: 'product' }, geometry: { type: 'LineString', coordinates: [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50], [76.50, 31.00]] } },
-          { type: 'Feature', properties: { id: 2, name: 'IOCL-PL-02 (Koyali-Sanganer)', type: 'crude' }, geometry: { type: 'LineString', coordinates: [[73.18, 22.30], [73.50, 23.50], [74.50, 25.50], [75.80, 26.90]] } },
-          { type: 'Feature', properties: { id: 3, name: 'IOCL-PL-03 (Paradip-Haldia)', type: 'gas' }, geometry: { type: 'LineString', coordinates: [[86.67, 20.27], [87.50, 21.50], [88.20, 22.50]] } }
-        ]
-      });
-
-      setMyRequests([
-        { id: 1, contractor_name: user?.name || 'Contractor User', company_name: 'Buildwell Ltd.', work_date: '2026-06-12', purpose: 'Road Construction', status: 'pending', risk_level: 'high', distance_to_pipeline: 120.5, lat: 28.58, lng: 77.12 },
-        { id: 2, contractor_name: user?.name || 'Contractor User', company_name: 'Buildwell Ltd.', work_date: '2026-06-15', purpose: 'Sewer Line', status: 'verified', risk_level: 'medium', distance_to_pipeline: 450.0, lat: 28.50, lng: 77.50 }
-      ]);
+      console.warn('Could not load map data', err);
+      setCheckError('Pipelines and permits could not be loaded because the LineVigil API is not reachable.');
     }
   };
 
@@ -70,62 +58,12 @@ const ContractorMap = () => {
     try {
       const res = await excavationService.checkCollision({ lat, lng });
       setCollisionInfo(res.data);
+      setCheckError('');
     } catch (err) {
-      console.warn('Backend check-collision failed. Executing local GIS calculations.', err);
-      
-      const mockPipelines = [
-        { name: 'IOCL-PL-01 (Mathura-Jalandhar)', geom: [[77.67, 27.49], [77.50, 28.50], [77.20, 29.50], [76.50, 31.00]] },
-        { name: 'IOCL-PL-02 (Koyali-Sanganer)', geom: [[73.18, 22.30], [73.50, 23.50], [74.50, 25.50], [75.80, 26.90]] },
-        { name: 'IOCL-PL-03 (Paradip-Haldia)', geom: [[86.67, 20.27], [87.50, 21.50], [88.20, 22.50]] }
-      ];
-
-      function pointToSegmentDistance(px, py, ax, ay, bx, by) {
-        const dx = bx - ax;
-        const dy = by - ay;
-        if (dx === 0 && dy === 0) return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2);
-        const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
-        const clampedT = Math.max(0, Math.min(1, t));
-        const nearestX = ax + clampedT * dx;
-        const nearestY = ay + clampedT * dy;
-        return Math.sqrt((px - nearestX) ** 2 + (py - nearestY) ** 2);
-      }
-
-      let minDistance = Infinity;
-      let nearestPipe = null;
-
-      for (const pipe of mockPipelines) {
-        let minPipeDist = Infinity;
-        for (let i = 0; i < pipe.geom.length - 1; i++) {
-          const d = pointToSegmentDistance(lng, lat, pipe.geom[i][0], pipe.geom[i][1], pipe.geom[i+1][0], pipe.geom[i+1][1]);
-          if (d < minPipeDist) minPipeDist = d;
-        }
-        const dMeters = minPipeDist * 111320;
-        if (dMeters < minDistance) {
-          minDistance = dMeters;
-          nearestPipe = pipe;
-        }
-      }
-
-      const distance = minDistance;
-      const pipelineName = nearestPipe ? nearestPipe.name : 'Unknown Pipeline';
-      let riskLevel = 'low';
-      let collisionStatus = 'safe';
-
-      if (distance < 100) {
-        riskLevel = 'high';
-        collisionStatus = 'danger';
-      } else if (distance < 500) {
-        riskLevel = 'medium';
-        collisionStatus = 'warning';
-      }
-
-      setCollisionInfo({
-        distanceToPipeline: distance,
-        pipelineName,
-        riskLevel,
-        collisionStatus,
-        overlappingPermits: []
-      });
+      // Never show a guessed distance: a wrong "safe" here is the dangerous failure.
+      console.warn('Proximity check failed', err);
+      setCollisionInfo(null);
+      setCheckError(err.response?.data?.error || 'The distance to the pipeline could not be checked. Try again when you are back online.');
     } finally {
       setCheckingCollision(false);
     }
@@ -225,6 +163,8 @@ const ContractorMap = () => {
                   </div>
                   
                 </div>
+              ) : checkError ? (
+                <p role="alert" className="p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-[10px] text-red-300">{checkError}</p>
               ) : (
                 <div className="p-3 bg-black/40 border border-slate-900 rounded-lg text-center text-slate-600 text-[8px] font-bold uppercase tracking-widest leading-normal">
                   Click on any map coordinate to measure safety zones and buffer clearances.

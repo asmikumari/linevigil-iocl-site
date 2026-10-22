@@ -308,7 +308,7 @@ const ContractorRequests = () => {
                   <div className="space-y-3">
                     {[
                       { label: 'Physical Marker Scan', status: selectedRequest.status !== 'pending' },
-                      { label: 'Proximity Check > 100m', status: selectedRequest.distance_to_pipeline > 100 },
+                      { label: 'More than 500 m from a pipeline', status: selectedRequest.distance_to_pipeline >= 500 },
                       { label: 'Active Patrol Supervision', status: selectedRequest.status === 'verified' || selectedRequest.status === 'approved' },
                     ].map((item, idx) => (
                       <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg bg-black/40 border border-slate-900">
