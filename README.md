@@ -8,7 +8,7 @@ Built during my Software Development Engineer internship at **Indian Oil Corpora
 
 [**Live demo**](https://linevigil-iocl-site.vercel.app) · [Walkthrough of each portal](#the-three-portals) · [Design decisions](ARCHITECTURE.md) · [Run it locally](#run-it-locally)
 
-![LineVigil landing page: a pipeline route drawing with 500 m and 1 km risk bands and a dig site measured 360 m from the pipeline](docs/screenshots/landing.jpg)
+![LineVigil landing page: "Know who's digging." over a contour map with a pipeline route and its risk band](docs/screenshots/landing.jpg)
 
 ## Why it exists
 
@@ -39,21 +39,21 @@ LineVigil puts the whole process on one live map: who wants to dig, how close th
 
 The command view. Every pipeline route, excavation permit, patrol and alert sits on one map. Admins assign patrols, review permits and track detections near the pipelines. No imagery provider is connected, so the satellite sweep is a labelled simulation: it places a test detection near a real route and scores it with the same distance rule.
 
-![Admin command view with pipeline routes, permit counts and satellite detections on the map](docs/screenshots/admin-command-hud.jpg)
+![Admin overview with permit and detection counts, the pipeline map and the simulated satellite sweep](docs/screenshots/admin-command-hud.jpg)
 
-![Detection alert with coordinates on the admin map](docs/screenshots/satellite-alert.jpg)
+![Detections table with severity, confidence and coordinates next to the map](docs/screenshots/satellite-alert.jpg)
 
 ### Patrol officer
 
 Built for the field. Officers see their assigned sites, navigate the corridor, run a site checklist and report incidents with photos. The app shell is cached by a service worker, so it opens with no signal and shows the tasks from the last sync. While offline it keeps recording the device's GPS track; one tap uploads everything once the officer is back in range, and retries never create duplicate points.
 
-![Patrol console in offline mode with 57 GPS points waiting to sync](docs/screenshots/patrol-offline.jpg)
+![Patrol field console with GPS status, the offline queue, an assigned permit and a proximity warning](docs/screenshots/patrol-offline.jpg)
 
 ### Contractor
 
 Contractors pick the dig site on the map, see the automatic proximity check straight away, and follow each permit from filing through patrol verification to approval.
 
-![Contractor permit list with risk level, work date and status for each permit](docs/screenshots/contractor-permits.jpg)
+![Contractor permit list with the measured distance, risk level and status of each permit](docs/screenshots/contractor-permits.jpg)
 
 ## Architecture
 
